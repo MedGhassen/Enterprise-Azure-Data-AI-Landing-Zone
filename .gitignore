@@ -1,0 +1,38 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+plan.txt
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.tfstate.lock.info
+.terraform.tfstate.lock.hcl
+
+# Local variable files (keep the committed environments/, examples/ and *.example files)
+*.auto.tfvars
+*.auto.tfvars.json
+*.local.tfvars
+platform/platform.tfvars
+
+# Sensitive (do not commit)
+*.pem
+*.key
+*.pfx
+.env
+.env.*
+backend.hcl
+*.backend.hcl
+backend.auto.tfvars
+*-backend.tfvars
+
+# Tooling
+.tflint.d/
+.DS_Store
+.idea/
+.vscode/

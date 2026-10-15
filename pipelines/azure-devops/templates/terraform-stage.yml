@@ -1,0 +1,98 @@
+parameters:
+  - name: environment
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: dependsOn
+    type: string
+  - name: terraformVersion
+    type: string
+    default: "1.9.8"
+
+stages:
+  - stage: Plan_${{ parameters.environment }}
+    displayName: Plan ${{ parameters.environment }}
+    dependsOn: ${{ parameters.dependsOn }}
+    # Continue when the previous environment had nothing to apply (skipped stage).
+    condition: not(or(failed(), canceled()))
+    jobs:
+      - job: Plan
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - template: install-terraform.yml
+            parameters:
+              terraformVersion: ${{ parameters.terraformVersion }}
+
+          # Exposes the federated token so Terraform authenticates with OIDC (no secrets).
+          - task: AzureCLI@2
+            displayName: terraform init + plan
+            name: plan
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              addSpnToEnvironment: true
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                export ARM_USE_OIDC=true ARM_USE_AZUREAD=true
+                export ARM_OIDC_TOKEN="$idToken" ARM_CLIENT_ID="$servicePrincipalId" ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                terraform init -input=false \
+                  -backend-config="resource_group_name=$(TF_STATE_RESOURCE_GROUP)" \
+                  -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" \
+                  -backend-config="container_name=$(TF_STATE_CONTAINER)" \
+                  -backend-config="key=data-ai-landing-zone-${{ parameters.environment }}.tfstate"
+                set +e
+                terraform plan -input=false -no-color -detailed-exitcode \
+                  -var-file=environments/${{ parameters.environment }}.tfvars -out=tfplan
+                code=$?
+                set -e
+                if [ "$code" -eq 1 ]; then exit 1; fi
+                echo "##vso[task.setvariable variable=hasChanges;isOutput=true]$([ "$code" -eq 2 ] && echo true || echo false)"
+
+          - publish: tfplan
+            artifact: tfplan-${{ parameters.environment }}
+            condition: and(succeeded(), eq(variables['plan.hasChanges'], 'true'))
+
+  - stage: Apply_${{ parameters.environment }}
+    displayName: Apply ${{ parameters.environment }}
+    dependsOn: Plan_${{ parameters.environment }}
+    condition: >-
+      and(succeeded(),
+          eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+          ne(variables['Build.Reason'], 'PullRequest'),
+          eq(dependencies.Plan_${{ parameters.environment }}.outputs['Plan.plan.hasChanges'], 'true'))
+    jobs:
+      - deployment: Apply
+        environment: terraform-${{ parameters.environment }}
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - download: current
+                  artifact: tfplan-${{ parameters.environment }}
+                - template: install-terraform.yml
+                  parameters:
+                    terraformVersion: ${{ parameters.terraformVersion }}
+                - task: AzureCLI@2
+                  displayName: terraform apply (reviewed plan)
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    addSpnToEnvironment: true
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      export ARM_USE_OIDC=true ARM_USE_AZUREAD=true
+                      export ARM_OIDC_TOKEN="$idToken" ARM_CLIENT_ID="$servicePrincipalId" ARM_TENANT_ID="$tenantId"
+                      export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                      terraform init -input=false \
+                        -backend-config="resource_group_name=$(TF_STATE_RESOURCE_GROUP)" \
+                        -backend-config="storage_account_name=$(TF_STATE_STORAGE_ACCOUNT)" \
+                        -backend-config="container_name=$(TF_STATE_CONTAINER)" \
+                        -backend-config="key=data-ai-landing-zone-${{ parameters.environment }}.tfstate"
+                      terraform apply -input=false "$(Pipeline.Workspace)/tfplan-${{ parameters.environment }}/tfplan"

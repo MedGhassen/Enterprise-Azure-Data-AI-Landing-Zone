@@ -1,0 +1,9 @@
+# Accepted findings (reviewed). Keep a justification next to every entry.
+
+# Classic Storage Analytics logging: superseded by Azure Monitor diagnostic
+# settings, which every storage account in this repo sends to Log Analytics.
+AVD-AZU-0057
+
+# Customer-managed keys: Microsoft-managed keys + infrastructure (double)
+# encryption are the default here. CMK is on the roadmap as an opt-in.
+AVD-AZU-0060

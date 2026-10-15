@@ -1,0 +1,34 @@
+# pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.99.0
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+        args: ["--hook-config=--retry-once-with-cleanup=true", "--tf-init-args=-backend=false"]
+      - id: terraform_tflint
+        args: ["--args=--config=__GIT_WORKING_DIR__/.tflint.hcl"]
+
+  - repo: local
+    hooks:
+      - id: terraform-docs
+        name: terraform-docs
+        entry: scripts/generate-docs.sh
+        language: script
+        pass_filenames: false
+        files: \.tf$
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck

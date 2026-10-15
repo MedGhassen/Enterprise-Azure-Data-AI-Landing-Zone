@@ -1,0 +1,57 @@
+# Azure DevOps: validate, then plan -> apply per environment (dev -> staging -> prod).
+# Each apply runs in a deployment job bound to an ADO environment (add approvals there)
+# and applies the exact plan artifact produced by its plan stage.
+#
+# Prerequisites
+#   - Service connections (workload identity federation): sc-dataai-dev, sc-dataai-staging, sc-dataai-prod
+#   - Variable group "terraform-state": TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT, TF_STATE_CONTAINER
+#   - ADO environments: terraform-dev, terraform-staging, terraform-prod
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: ["*.tf", "**/*.tf", "**/*.tfvars", "pipelines/azure-devops/*"]
+
+pr:
+  branches:
+    include: [main]
+
+variables:
+  - group: terraform-state
+  - name: terraformVersion
+    value: "1.9.8"
+
+stages:
+  - stage: Validate
+    jobs:
+      - job: Validate
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - template: templates/install-terraform.yml
+            parameters:
+              terraformVersion: $(terraformVersion)
+          - script: terraform fmt -check -recursive -diff
+            displayName: terraform fmt
+          - script: terraform init -backend=false -input=false && terraform validate && terraform test
+            displayName: validate + test (landing zone)
+          - script: cd platform && terraform init -backend=false -input=false && terraform validate && terraform test
+            displayName: validate + test (platform)
+
+  - template: templates/terraform-stage.yml
+    parameters:
+      environment: dev
+      serviceConnection: sc-dataai-dev
+      dependsOn: Validate
+
+  - template: templates/terraform-stage.yml
+    parameters:
+      environment: staging
+      serviceConnection: sc-dataai-staging
+      dependsOn: Apply_dev
+
+  - template: templates/terraform-stage.yml
+    parameters:
+      environment: prod
+      serviceConnection: sc-dataai-prod
+      dependsOn: Apply_staging
