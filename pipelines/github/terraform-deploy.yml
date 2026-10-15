@@ -1,0 +1,46 @@
+# Deployment pipeline: PRs plan every environment; merges to main promote
+# dev -> staging -> prod sequentially, each apply gated by its GitHub environment.
+# Copy this file and terraform-env.yml into .github/workflows/ of your fork.
+name: terraform-deploy
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["**.tf", "**.tfvars", "**.tftest.hcl", ".github/workflows/terraform-*.yml"]
+  push:
+    branches: [main]
+    paths: ["**.tf", "**.tfvars", ".github/workflows/terraform-*.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: terraform-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dev:
+    uses: ./.github/workflows/terraform-env.yml
+    with:
+      environment: dev
+      apply: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit
+
+  staging:
+    needs: dev
+    uses: ./.github/workflows/terraform-env.yml
+    with:
+      environment: staging
+      apply: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit
+
+  prod:
+    needs: staging
+    uses: ./.github/workflows/terraform-env.yml
+    with:
+      environment: prod
+      apply: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit

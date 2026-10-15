@@ -1,181 +1,141 @@
-variable "project_name" {
-  description = "Project name for naming"
+variable "management_group_prefix" {
+  description = "Prefix for management group IDs (names), e.g. `contoso` -> `contoso-platform`."
   type        = string
-}
-
-variable "environment" {
-  description = "Environment (dev, staging, prod)"
-  type        = string
-}
-
-variable "tags" {
-  description = "Tags to apply to resources"
-  type        = map(string)
-  default     = {}
+  validation {
+    condition     = can(regex("^[a-z0-9-]{2,30}$", var.management_group_prefix))
+    error_message = "management_group_prefix must be 2-30 lowercase letters, digits or hyphens."
+  }
 }
 
 variable "management_group_parent_id" {
-  description = "Parent management group ID (e.g. tenant root)"
+  description = "Parent management group ID. null = tenant root group."
   type        = string
-  default     = ""
-}
-
-variable "create_management_group_hierarchy" {
-  description = "Create Platform -> Landing Zones -> Sandbox hierarchy"
-  type        = bool
-  default     = true
-}
-
-variable "subscription_id" {
-  description = "Subscription ID to associate with Landing Zones (legacy single-sub; use subscription_id_dataai_* when using multi-sub)"
-  type        = string
-  default     = ""
+  default     = null
 }
 
 variable "create_identity_management_group" {
-  description = "Create Identity child management group under Platform (for hybrid AD)"
+  description = "Create the Platform/Identity management group."
   type        = bool
   default     = false
 }
 
-# Optional subscription IDs for multi-subscription layout; empty = skip association
-variable "subscription_id_connectivity" {
-  description = "Subscription ID for Connectivity (Hub, Firewall, DNS); associate with Platform/Connectivity MG"
-  type        = string
-  default     = ""
-}
-
-variable "subscription_id_management" {
-  description = "Subscription ID for Management (Log Analytics, Defender, Sentinel); associate with Platform/Management MG"
-  type        = string
-  default     = ""
-}
-
-variable "subscription_id_identity" {
-  description = "Subscription ID for Identity (hybrid AD); associate with Platform/Identity MG"
-  type        = string
-  default     = ""
-}
-
-variable "subscription_id_dataai_dev" {
-  description = "Subscription ID for Data & AI Dev; associate with Landing Zones/Data & AI Dev MG"
-  type        = string
-  default     = ""
-}
-
-variable "subscription_id_dataai_staging" {
-  description = "Subscription ID for Data & AI Staging; associate with Landing Zones/Data & AI Staging MG"
-  type        = string
-  default     = ""
-}
-
-variable "subscription_id_dataai_prod" {
-  description = "Subscription ID for Data & AI Prod; associate with Landing Zones/Data & AI Prod MG"
-  type        = string
-  default     = ""
-}
-
-variable "subscription_id_sandbox" {
-  description = "Subscription ID for Sandbox; associate with Sandbox child MG"
-  type        = string
-  default     = ""
-}
-
-variable "policy_assignments" {
-  description = "List of policy assignments: policy_definition_id (or display_name for built-in), management_group_id, parameters (optional)"
-  type = list(object({
-    policy_definition_id = optional(string)
-    builtin_policy_name  = optional(string) # e.g. allowed-locations
-    management_group_id  = string
-    display_name         = optional(string)
-    parameters           = optional(string) # JSON
-    enforcement_mode     = optional(bool, true)
-  }))
-  default = []
-}
-
-variable "custom_roles" {
-  description = "Custom RBAC role definitions: name, scope (subscription or management group ID), actions, assignable_scopes"
-  type = list(object({
-    name              = string
-    scope             = string
-    description       = string
-    actions           = list(string)
-    assignable_scopes = list(string)
-  }))
-  default = []
-}
-
-variable "role_assignments" {
-  description = "Role assignments: principal_id, role_definition_id or role_definition_name, scope (resource group ID or scope)"
-  type = list(object({
-    principal_id         = string
-    role_definition_id   = optional(string)
-    role_definition_name = optional(string) # built-in: Reader, Contributor, Storage Blob Data Contributor
-    scope                = string
-  }))
-  default = []
+variable "subscription_placement" {
+  description = "Subscriptions to move under management groups. Keys: platform, landing_zones, sandbox, management, connectivity, identity, dataai_dev, dataai_staging, dataai_prod."
+  type        = map(string)
+  default     = {}
+  validation {
+    condition = alltrue([for k in keys(var.subscription_placement) : contains(
+      ["platform", "landing_zones", "sandbox", "management", "connectivity", "identity", "dataai_dev", "dataai_staging", "dataai_prod"], k
+    )])
+    error_message = "Unknown key in subscription_placement."
+  }
 }
 
 variable "allowed_locations" {
-  description = "Allowed Azure regions for policy"
+  description = "Regions allowed under Landing Zones."
   type        = list(string)
-  default     = ["westeurope", "northeurope"]
 }
 
-variable "allowed_vm_skus" {
-  description = "Allowed VM SKUs for policy (empty = use default set)"
+variable "required_tags" {
+  description = "Tags required on resource groups and inherited by resources."
   type        = list(string)
-  default     = []
+  default     = ["environment", "cost_center", "owner"]
 }
 
-# Compliance policy assignments (optional; only assign when enable_* is true)
+variable "policy_identity_location" {
+  description = "Region for the managed identities of policy assignments."
+  type        = string
+}
+
+# Compliance
 variable "enable_iso27001" {
-  description = "Assign ISO 27001:2013 Regulatory Compliance initiative at compliance_policy_scope_mg"
+  description = "Assign the built-in ISO 27001:2013 regulatory compliance initiative."
   type        = bool
   default     = false
 }
 
 variable "enable_nis2" {
-  description = "Assign NIS2 initiative when nis2_initiative_id is set"
+  description = "Assign a NIS2 initiative (requires nis2_initiative_id)."
   type        = bool
   default     = false
 }
 
 variable "nis2_initiative_id" {
-  description = "Policy set definition (initiative) ID for NIS2; required when enable_nis2 is true (custom/partner initiative)"
+  description = "Policy set definition ID of a custom/partner NIS2 initiative."
   type        = string
-  default     = ""
+  default     = null
+  validation {
+    condition     = var.nis2_initiative_id == null || can(regex("/providers/Microsoft.Authorization/policySetDefinitions/", var.nis2_initiative_id))
+    error_message = "nis2_initiative_id must be a policy set definition resource ID."
+  }
 }
 
-variable "compliance_policy_scope_mg" {
-  description = "Management group key for compliance policy assignment: landing_zones, platform, or sandbox"
+variable "compliance_policy_scope" {
+  description = "Management group key for compliance assignments (landing_zones, platform, sandbox, ...)."
   type        = string
   default     = "landing_zones"
 }
 
 variable "compliance_policy_parameters_iso27001" {
-  description = "Optional parameters for ISO 27001 initiative assignment (JSON string)"
+  description = "Parameters (JSON) for the ISO 27001 assignment."
   type        = string
-  default     = "{}"
+  default     = null
 }
 
 variable "compliance_policy_parameters_nis2" {
-  description = "Optional parameters for NIS2 initiative assignment (JSON string)"
+  description = "Parameters (JSON) for the NIS2 assignment."
   type        = string
-  default     = "{}"
+  default     = null
 }
 
-# Optional: extensible list for additional compliance initiatives
 variable "compliance_policy_assignments" {
-  description = "Additional compliance assignments: enable, initiative_display_name or policy_set_definition_id, assignment_scope (landing_zones|platform|sandbox), parameters (JSON string)"
+  description = "Additional initiatives to assign."
   type = list(object({
     enable                   = bool
-    initiative_display_name  = optional(string)
-    policy_set_definition_id = optional(string)
+    assignment_name          = string
+    policy_set_definition_id = string
+    display_name             = optional(string)
     assignment_scope         = optional(string, "landing_zones")
-    parameters               = optional(string, "{}")
-    assignment_name          = optional(string) # unique name for the assignment
+    parameters               = optional(string)
+  }))
+  default = []
+  validation {
+    condition     = alltrue([for a in var.compliance_policy_assignments : length(a.assignment_name) <= 24])
+    error_message = "assignment_name must be at most 24 characters (management group scope limit)."
+  }
+}
+
+# RBAC
+variable "create_default_custom_roles" {
+  description = "Create Data Engineer, Data Scientist and ML Engineer custom roles at the Landing Zones scope."
+  type        = bool
+  default     = true
+}
+
+variable "custom_role_name_prefix" {
+  description = "Prefix for default custom role names."
+  type        = string
+  default     = "Data & AI"
+}
+
+variable "custom_roles" {
+  description = "Additional custom roles (defined and assignable at the Landing Zones scope)."
+  type = list(object({
+    name         = string
+    description  = string
+    actions      = list(string)
+    not_actions  = optional(list(string), [])
+    data_actions = optional(list(string), [])
+  }))
+  default = []
+}
+
+variable "role_assignments" {
+  description = "Role assignments. role: built-in role name or custom role name; scope: management group key (e.g. dataai_prod) or a full resource ID."
+  type = list(object({
+    principal_id = string
+    role         = string
+    scope        = string
   }))
   default = []
 }

@@ -1,106 +1,85 @@
-variable "project_name" {
-  description = "Project name for naming"
-  type        = string
-}
-
-variable "environment" {
-  description = "Environment (dev, staging, prod)"
-  type        = string
-}
-
-variable "primary_region" {
-  description = "Azure region"
-  type        = string
-}
-
 variable "name_prefix" {
-  description = "Prefix for resource names"
+  description = "Prefix for resource names, e.g. `dataai-dev-weu`."
   type        = string
 }
 
 variable "name_suffix" {
-  description = "Suffix for resource names"
+  description = "Instance suffix for resource names, e.g. `001`."
+  type        = string
+}
+
+variable "unique_suffix" {
+  description = "Short random suffix used for globally unique names."
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region."
+  type        = string
+}
+
+variable "resource_group_name" {
+  description = "Resource group for the data lake."
   type        = string
 }
 
 variable "tags" {
-  description = "Tags to apply"
+  description = "Tags applied to all resources."
   type        = map(string)
   default     = {}
 }
 
-variable "resource_group_name" {
-  description = "Resource group for storage"
+variable "private_endpoint_subnet_id" {
+  description = "Subnet for the blob/dfs private endpoints."
   type        = string
 }
 
-variable "subnet_id_private_endpoint" {
-  description = "Subnet ID for private endpoints (snet-data)"
-  type        = string
+variable "private_dns_zone_ids" {
+  description = "Private DNS zone IDs keyed by zone name (from the networking module)."
+  type        = map(string)
 }
 
-variable "private_dns_zone_id_blob" {
-  description = "Private DNS zone ID for privatelink.blob.core.windows.net (optional - pass empty to skip A record)"
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace ID for diagnostics."
   type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_id_dfs" {
-  description = "Private DNS zone ID for privatelink.dfs.core.windows.net (optional)"
-  type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_blob_name" {
-  description = "Private DNS zone name for blob (to create A record)"
-  type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_blob_rg" {
-  description = "Resource group of blob private DNS zone"
-  type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_dfs_name" {
-  description = "Private DNS zone name for dfs"
-  type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_dfs_rg" {
-  description = "Resource group of dfs private DNS zone"
-  type        = string
-  default     = ""
 }
 
 variable "replication" {
-  description = "Storage account replication (GRS, RAGRS, LRS, etc.)"
+  description = "Replication type (LRS, ZRS, GRS, RAGRS, GZRS, RAGZRS)."
   type        = string
-  default     = "GRS"
+  default     = "ZRS"
+  validation {
+    condition     = contains(["LRS", "ZRS", "GRS", "RAGRS", "GZRS", "RAGZRS"], var.replication)
+    error_message = "replication must be one of LRS, ZRS, GRS, RAGRS, GZRS, RAGZRS."
+  }
+}
+
+variable "filesystems" {
+  description = "ADLS Gen2 filesystems (containers) to create. Medallion layers plus Unity Catalog and Synapse workspace storage."
+  type        = list(string)
+  default     = ["raw", "curated", "enriched", "unity", "synapse"]
 }
 
 variable "blob_soft_delete_retention_days" {
-  description = "Blob soft delete retention in days"
+  description = "Blob soft-delete retention in days."
   type        = number
   default     = 30
 }
 
 variable "container_soft_delete_retention_days" {
-  description = "Container soft delete retention in days"
+  description = "Container soft-delete retention in days."
   type        = number
   default     = 30
 }
 
 variable "lifecycle_cool_after_days" {
-  description = "Move blob to Cool tier after N days"
+  description = "Days after last modification before raw blobs move to Cool."
   type        = number
   default     = 90
 }
 
 variable "lifecycle_archive_after_days" {
-  description = "Move blob to Archive tier after N days"
+  description = "Days after last modification before raw blobs move to Archive."
   type        = number
   default     = 365
 }

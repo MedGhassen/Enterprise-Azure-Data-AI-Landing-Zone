@@ -1,178 +1,119 @@
-variable "project_name" {
-  description = "Project name for naming"
-  type        = string
-}
-
-variable "environment" {
-  description = "Environment (dev, staging, prod)"
-  type        = string
-}
-
-variable "primary_region" {
-  description = "Azure region"
-  type        = string
-}
-
 variable "name_prefix" {
-  description = "Prefix for resource names"
+  description = "Prefix for resource names, e.g. `dataai-dev-weu`."
   type        = string
 }
 
 variable "name_suffix" {
-  description = "Suffix for resource names"
+  description = "Instance suffix for resource names, e.g. `001`."
+  type        = string
+}
+
+variable "unique_suffix" {
+  description = "Short random suffix used for globally unique names."
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region."
+  type        = string
+}
+
+variable "resource_group_name" {
+  description = "Resource group for Synapse."
   type        = string
 }
 
 variable "tags" {
-  description = "Tags to apply"
+  description = "Tags applied to all resources."
   type        = map(string)
   default     = {}
 }
 
-variable "resource_group_name" {
-  description = "Resource group for Synapse"
+variable "tenant_id" {
+  description = "Entra tenant ID."
   type        = string
+}
+
+variable "entra_admin_object_id" {
+  description = "Object ID of the Entra user/group that is Synapse SQL administrator."
+  type        = string
+}
+
+variable "entra_admin_login" {
+  description = "Display name of the Entra SQL administrator."
+  type        = string
+  default     = "sql-entra-admin"
 }
 
 variable "storage_account_id" {
-  description = "ADLS Gen2 storage account ID (for default data lake)"
+  description = "Data lake storage account ID (RBAC for the workspace identity)."
   type        = string
 }
 
-variable "storage_account_name" {
-  description = "Storage account name (for filesystem path)"
+variable "data_lake_filesystem_id" {
+  description = "Primary ADLS Gen2 filesystem URL, e.g. https://<account>.dfs.core.windows.net/synapse."
   type        = string
 }
 
-variable "data_lake_filesystem_name" {
-  description = "Default filesystem/container name (e.g. raw or curated)"
+variable "private_endpoint_subnet_id" {
+  description = "Subnet for the Synapse private endpoints."
   type        = string
-  default     = "curated"
 }
 
-variable "sql_admin_login" {
-  description = "SQL admin login (AAD-only recommended; this for legacy)"
-  type        = string
-  default     = ""
+variable "private_dns_zone_ids" {
+  description = "Private DNS zone IDs keyed by zone name (from the networking module)."
+  type        = map(string)
 }
 
-variable "sql_admin_password" {
-  description = "SQL admin password (avoid if using AAD-only)"
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace ID for diagnostics."
   type        = string
-  default     = ""
-  sensitive   = true
 }
 
-variable "aad_admin_object_ids" {
-  description = "Azure AD object IDs for Synapse AAD admin"
-  type        = list(string)
-  default     = []
+variable "data_exfiltration_protection_enabled" {
+  description = "Restrict managed VNet outbound traffic to approved targets (cannot be changed after creation)."
+  type        = bool
+  default     = false
+}
+
+variable "enable_sql_pool" {
+  description = "Create a dedicated SQL pool (billed while running)."
+  type        = bool
+  default     = false
 }
 
 variable "sql_pool_sku" {
-  description = "Dedicated SQL pool SKU (e.g. DW100c)"
+  description = "Dedicated SQL pool SKU."
   type        = string
   default     = "DW100c"
 }
 
-variable "sql_collation" {
-  description = "SQL collation"
+variable "spark_node_size" {
+  description = "Spark node size (Small, Medium, Large, ...)."
   type        = string
-  default     = "SQL_Latin1_General_CP1_CI_AS"
-}
-
-variable "spark_pool_node_count" {
-  description = "Spark pool initial node count"
-  type        = number
-  default     = 3
-}
-
-variable "spark_pool_min_nodes" {
-  description = "Spark pool autoscale min"
-  type        = number
-  default     = 3
-}
-
-variable "spark_pool_max_nodes" {
-  description = "Spark pool autoscale max"
-  type        = number
-  default     = 10
-}
-
-variable "spark_pool_auto_pause_delay" {
-  description = "Spark pool auto-pause delay in minutes"
-  type        = number
-  default     = 15
+  default     = "Small"
 }
 
 variable "spark_version" {
-  description = "Spark runtime version"
+  description = "Spark runtime version."
   type        = string
   default     = "3.4"
 }
 
-variable "spark_node_size" {
-  description = "Spark node size (Memory Optimized)"
-  type        = string
-  default     = "Medium"
+variable "spark_min_nodes" {
+  description = "Minimum Spark nodes."
+  type        = number
+  default     = 3
 }
 
-variable "log_analytics_workspace_id" {
-  description = "Log Analytics workspace ID for diagnostics"
-  type        = string
-  default     = ""
+variable "spark_max_nodes" {
+  description = "Maximum Spark nodes."
+  type        = number
+  default     = 10
 }
 
-variable "enable_diagnostics" {
-  description = "Enable diagnostic settings for Synapse"
-  type        = bool
-  default     = true
-}
-
-variable "enable_private_endpoint" {
-  description = "Create private endpoint for Synapse SQL"
-  type        = bool
-  default     = true
-}
-
-variable "subnet_id_private_endpoint" {
-  description = "Subnet for Synapse private endpoints"
-  type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_ids_synapse" {
-  description = "Map or list of private DNS zone IDs for Synapse (sql, dev, azuresynapse)"
-  type        = map(string)
-  default     = {}
-}
-
-variable "private_dns_zone_sql_name" {
-  type    = string
-  default = ""
-}
-
-variable "private_dns_zone_sql_rg" {
-  type    = string
-  default = ""
-}
-
-variable "private_dns_zone_dev_name" {
-  type    = string
-  default = ""
-}
-
-variable "private_dns_zone_dev_rg" {
-  type    = string
-  default = ""
-}
-
-variable "private_dns_zone_azuresynapse_name" {
-  type    = string
-  default = ""
-}
-
-variable "private_dns_zone_azuresynapse_rg" {
-  type    = string
-  default = ""
+variable "spark_auto_pause_minutes" {
+  description = "Idle minutes before the Spark pool pauses."
+  type        = number
+  default     = 15
 }

@@ -1,0 +1,20 @@
+# Copy to platform.tfvars (git-ignored) and adjust. Do not commit real subscription IDs.
+management_group_prefix  = "contoso"
+allowed_locations        = ["westeurope", "northeurope"]
+policy_identity_location = "westeurope"
+
+# subscription_placement = {
+#   connectivity   = "00000000-0000-0000-0000-000000000000"
+#   management     = "00000000-0000-0000-0000-000000000000"
+#   dataai_dev     = "00000000-0000-0000-0000-000000000000"
+#   dataai_staging = "00000000-0000-0000-0000-000000000000"
+#   dataai_prod    = "00000000-0000-0000-0000-000000000000"
+# }
+
+enable_iso27001 = true
+enable_nis2     = false
+# nis2_initiative_id = "/providers/Microsoft.Management/managementGroups/<mg>/providers/Microsoft.Authorization/policySetDefinitions/<id>"
+
+# role_assignments = [
+#   { principal_id = "<entra-group-object-id>", role = "Data & AI Data Engineer", scope = "dataai_dev" },
+# ]

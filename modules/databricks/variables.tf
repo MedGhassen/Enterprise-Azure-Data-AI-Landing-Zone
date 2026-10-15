@@ -1,115 +1,82 @@
-variable "project_name" {
-  description = "Project name for naming"
-  type        = string
-}
-
-variable "environment" {
-  description = "Environment (dev, staging, prod)"
-  type        = string
-}
-
-variable "primary_region" {
-  description = "Azure region"
-  type        = string
-}
-
 variable "name_prefix" {
-  description = "Prefix for resource names"
+  description = "Prefix for resource names, e.g. `dataai-dev-weu`."
   type        = string
 }
 
 variable "name_suffix" {
-  description = "Suffix for resource names"
+  description = "Instance suffix for resource names, e.g. `001`."
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region."
+  type        = string
+}
+
+variable "resource_group_name" {
+  description = "Resource group for Databricks."
   type        = string
 }
 
 variable "tags" {
-  description = "Tags to apply"
+  description = "Tags applied to all resources."
   type        = map(string)
   default     = {}
 }
 
-variable "resource_group_name" {
-  description = "Resource group for Databricks"
+variable "virtual_network_id" {
+  description = "Spoke VNet ID used for VNet injection."
   type        = string
 }
 
-variable "subnet_id_private" {
-  description = "Private subnet ID for VNet injection"
+variable "private_subnet_name" {
+  description = "Name of the delegated private (container) subnet."
   type        = string
 }
 
-variable "subnet_id_public" {
-  description = "Public subnet ID for VNet injection"
+variable "public_subnet_name" {
+  description = "Name of the delegated public (host) subnet."
   type        = string
 }
 
-variable "nsg_association_id_public" {
-  description = "NSG association ID for the public Databricks subnet"
+variable "private_subnet_nsg_association_id" {
+  description = "NSG association ID of the private subnet."
   type        = string
 }
 
-variable "nsg_association_id_private" {
-  description = "NSG association ID for the private Databricks subnet"
+variable "public_subnet_nsg_association_id" {
+  description = "NSG association ID of the public subnet."
   type        = string
 }
 
-variable "no_public_ip" {
-  description = "Disable public IP for clusters (secure cluster connectivity)"
+variable "private_endpoint_subnet_id" {
+  description = "Subnet for the workspace private endpoints."
+  type        = string
+}
+
+variable "private_dns_zone_ids" {
+  description = "Private DNS zone IDs keyed by zone name (from the networking module)."
+  type        = map(string)
+}
+
+variable "storage_account_id" {
+  description = "Data lake storage account ID (Unity Catalog access connector RBAC)."
+  type        = string
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace ID for diagnostics."
+  type        = string
+}
+
+variable "public_network_access_enabled" {
+  description = "Allow access to the workspace UI/API from the internet. Keep false for a fully private workspace."
+  type        = bool
+  default     = false
+}
+
+variable "create_browser_authentication_endpoint" {
+  description = "Create the browser_authentication private endpoint (one per region is enough)."
   type        = bool
   default     = true
-}
-
-variable "metastore_name" {
-  description = "Unity Catalog metastore name"
-  type        = string
-  default     = "uc-metastore"
-}
-
-variable "catalog_name" {
-  description = "Unity Catalog default catalog name"
-  type        = string
-  default     = "main"
-}
-
-variable "private_dns_zone_id_databricks" {
-  description = "Private DNS zone ID for privatelink.azuredatabricks.net"
-  type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_databricks_name" {
-  description = "Private DNS zone name for Databricks"
-  type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_databricks_rg" {
-  description = "Resource group of Databricks private DNS zone"
-  type        = string
-  default     = ""
-}
-
-variable "subnet_id_private_endpoint" {
-  description = "Subnet for Databricks workspace private endpoint (e.g. snet-data or snet-databricks-private)"
-  type        = string
-  default     = ""
-}
-
-variable "enable_private_endpoint" {
-  description = "Create private endpoint for Databricks workspace"
-  type        = bool
-  default     = true
-}
-
-variable "resource_group_name_dns" {
-  description = "Resource group for private DNS A record (if different)"
-  type        = string
-  default     = ""
-}
-
-variable "storage_account_name" {
-  description = "Storage account name for Unity Catalog metastore (container 'unity' must exist)"
-  type        = string
-  default     = ""
 }

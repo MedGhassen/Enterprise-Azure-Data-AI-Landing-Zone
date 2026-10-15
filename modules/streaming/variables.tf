@@ -1,109 +1,95 @@
-variable "project_name" {
-  description = "Project name for naming"
-  type        = string
-}
-
-variable "environment" {
-  description = "Environment (dev, staging, prod)"
-  type        = string
-}
-
-variable "primary_region" {
-  description = "Azure region"
-  type        = string
-}
-
 variable "name_prefix" {
-  description = "Prefix for resource names"
+  description = "Prefix for resource names, e.g. `dataai-dev-weu`."
   type        = string
 }
 
 variable "name_suffix" {
-  description = "Suffix for resource names"
+  description = "Instance suffix for resource names, e.g. `001`."
+  type        = string
+}
+
+variable "unique_suffix" {
+  description = "Short random suffix used for globally unique names."
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region."
+  type        = string
+}
+
+variable "resource_group_name" {
+  description = "Resource group for streaming resources."
   type        = string
 }
 
 variable "tags" {
-  description = "Tags to apply"
+  description = "Tags applied to all resources."
   type        = map(string)
   default     = {}
 }
 
-variable "resource_group_name" {
-  description = "Resource group for streaming"
+variable "private_endpoint_subnet_id" {
+  description = "Subnet for the Event Hubs private endpoint."
+  type        = string
+}
+
+variable "private_dns_zone_ids" {
+  description = "Private DNS zone IDs keyed by zone name (from the networking module)."
+  type        = map(string)
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace ID for diagnostics."
   type        = string
 }
 
 variable "event_hubs_sku" {
-  description = "Event Hubs namespace SKU (Basic, Standard, Premium)"
+  description = "Event Hubs namespace SKU. Standard or Premium (private endpoints are not available on Basic)."
   type        = string
   default     = "Standard"
+  validation {
+    condition     = contains(["Standard", "Premium"], var.event_hubs_sku)
+    error_message = "event_hubs_sku must be Standard or Premium."
+  }
+}
+
+variable "event_hubs_capacity" {
+  description = "Throughput units (Standard) or processing units (Premium)."
+  type        = number
+  default     = 1
+}
+
+variable "event_hubs_max_throughput_units" {
+  description = "Auto-inflate maximum throughput units (Standard only, 0 disables auto-inflate)."
+  type        = number
+  default     = 0
 }
 
 variable "event_hubs" {
-  description = "List of event hubs: name, partition_count, message_retention"
+  description = "Event hubs to create."
   type = list(object({
     name              = string
-    partition_count   = number
-    message_retention = number
+    partition_count   = optional(number, 4)
+    message_retention = optional(number, 7)
   }))
-  default = [{ name = "ingest", partition_count = 4, message_retention = 1 }]
+  default = [{ name = "ingest" }]
 }
 
-variable "capture_storage_account_id" {
-  description = "Storage account ID for Event Hubs capture (ADLS Gen2)"
-  type        = string
-  default     = ""
-}
-
-variable "capture_container_name" {
-  description = "Container name for capture"
-  type        = string
-  default     = "eventhub-capture"
-}
-
-variable "subnet_id_private_endpoint" {
-  description = "Subnet for Event Hubs private endpoint"
-  type        = string
-  default     = ""
-}
-
-variable "enable_private_endpoint" {
-  description = "Create private endpoint for Event Hubs"
+variable "enable_stream_analytics" {
+  description = "Create a Stream Analytics job."
   type        = bool
-  default     = true
-}
-
-variable "enable_diagnostics" {
-  description = "Enable diagnostic settings for Stream Analytics"
-  type        = bool
-  default     = true
-}
-
-variable "private_dns_zone_eventhub_name" {
-  type    = string
-  default = ""
-}
-
-variable "private_dns_zone_eventhub_rg" {
-  type    = string
-  default = ""
-}
-
-variable "stream_analytics_sku" {
-  description = "Stream Analytics job SKU"
-  type        = string
-  default     = "Standard"
+  default     = false
 }
 
 variable "stream_analytics_streaming_units" {
-  description = "Streaming units for Stream Analytics"
+  description = "Streaming units for the Stream Analytics job."
   type        = number
   default     = 3
 }
 
-variable "log_analytics_workspace_id" {
-  description = "Log Analytics for Stream Analytics diagnostics"
+variable "stream_analytics_query" {
+  description = "Stream Analytics transformation query. Inputs/outputs must be defined separately."
   type        = string
-  default     = ""
+  default     = "SELECT * INTO [output] FROM [input]"
 }

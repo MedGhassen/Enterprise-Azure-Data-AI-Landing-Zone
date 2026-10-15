@@ -1,0 +1,40 @@
+name: Bug report
+description: Something does not deploy or behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Do not include subscription IDs, tenant IDs, secrets or state files.**
+        Security vulnerabilities: please follow SECURITY.md instead of opening a public issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the exact error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Stack (root or platform), tfvars used (redacted), commands run.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `terraform version` (Terraform + azurerm) and the repository tag/commit.
+    validations:
+      required: true
+  - type: input
+    id: region
+    attributes:
+      label: Azure region

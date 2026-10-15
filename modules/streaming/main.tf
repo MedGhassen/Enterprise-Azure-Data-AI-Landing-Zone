@@ -1,30 +1,35 @@
+# Event Hubs namespace: Entra-only (no SAS keys), private endpoint only.
 resource "azurerm_eventhub_namespace" "main" {
-  name                = "${var.name_prefix}-evhns-${var.name_suffix}"
-  location            = var.primary_region
-  resource_group_name = var.resource_group_name
-  sku                 = var.event_hubs_sku
-  capacity            = var.event_hubs_sku == "Basic" ? 1 : (var.event_hubs_sku == "Standard" ? 1 : 1)
-  tags                = var.tags
+  name                          = "${var.name_prefix}-evhns-${var.unique_suffix}-${var.name_suffix}"
+  location                      = var.location
+  resource_group_name           = var.resource_group_name
+  sku                           = var.event_hubs_sku
+  capacity                      = var.event_hubs_capacity
+  auto_inflate_enabled          = var.event_hubs_sku == "Standard" && var.event_hubs_max_throughput_units > 0
+  maximum_throughput_units      = var.event_hubs_sku == "Standard" && var.event_hubs_max_throughput_units > 0 ? var.event_hubs_max_throughput_units : null
+  public_network_access_enabled = false
+  local_authentication_enabled  = false
+  minimum_tls_version           = "1.2"
+  tags                          = var.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
 }
 
 resource "azurerm_eventhub" "hubs" {
-  for_each            = { for h in var.event_hubs : h.name => h }
-  name                = each.value.name
-  namespace_name      = azurerm_eventhub_namespace.main.name
-  resource_group_name = var.resource_group_name
-  partition_count     = each.value.partition_count
-  message_retention   = each.value.message_retention
+  for_each          = { for h in var.event_hubs : h.name => h }
+  name              = each.value.name
+  namespace_id      = azurerm_eventhub_namespace.main.id
+  partition_count   = each.value.partition_count
+  message_retention = each.value.message_retention
 }
 
-# Event Hubs capture: configure via Azure portal or separate automation (azurerm_eventhub_capture deprecated/removed in newer provider)
-
-# Private endpoint for Event Hubs
 resource "azurerm_private_endpoint" "eventhubs" {
-  count               = var.enable_private_endpoint ? 1 : 0
   name                = "${var.name_prefix}-evh-pe-${var.name_suffix}"
-  location            = var.primary_region
+  location            = var.location
   resource_group_name = var.resource_group_name
-  subnet_id           = var.subnet_id_private_endpoint
+  subnet_id           = var.private_endpoint_subnet_id
   tags                = var.tags
 
   private_service_connection {
@@ -33,35 +38,62 @@ resource "azurerm_private_endpoint" "eventhubs" {
     subresource_names              = ["namespace"]
     is_manual_connection           = false
   }
+
+  private_dns_zone_group {
+    name                 = "default"
+    private_dns_zone_ids = [var.private_dns_zone_ids["privatelink.servicebus.windows.net"]]
+  }
 }
 
-resource "azurerm_private_dns_a_record" "eventhubs" {
-  count               = var.enable_private_endpoint && var.private_dns_zone_eventhub_name != "" && var.private_dns_zone_eventhub_rg != "" ? 1 : 0
-  name                = azurerm_eventhub_namespace.main.name
-  zone_name           = var.private_dns_zone_eventhub_name
-  resource_group_name = var.private_dns_zone_eventhub_rg
-  ttl                 = 300
-  records             = [azurerm_private_endpoint.eventhubs[0].private_service_connection[0].private_ip_address]
+resource "azurerm_monitor_diagnostic_setting" "eventhubs" {
+  name                           = "diag-to-law"
+  target_resource_id             = azurerm_eventhub_namespace.main.id
+  log_analytics_workspace_id     = var.log_analytics_workspace_id
+  log_analytics_destination_type = "Dedicated"
+
+  enabled_log {
+    category_group = "allLogs"
+  }
+  enabled_metric {
+    category = "AllMetrics"
+  }
 }
 
-# Stream Analytics job (transformation_query required; customize with real inputs/outputs)
+# ---------------------------------------------------------------------------
+# Stream Analytics (optional). Provide your own query, inputs and outputs.
+# ---------------------------------------------------------------------------
 resource "azurerm_stream_analytics_job" "main" {
-  name                = "${var.name_prefix}-asa-${var.name_suffix}"
-  resource_group_name = var.resource_group_name
-  location            = var.primary_region
-  streaming_units     = var.stream_analytics_streaming_units
-  tags                = var.tags
+  count                = var.enable_stream_analytics ? 1 : 0
+  name                 = "${var.name_prefix}-asa-${var.name_suffix}"
+  resource_group_name  = var.resource_group_name
+  location             = var.location
+  streaming_units      = var.stream_analytics_streaming_units
+  transformation_query = var.stream_analytics_query
+  tags                 = var.tags
 
-  transformation_query = "SELECT * INTO [YourOutput] FROM [YourInput]"
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+# Stream Analytics identity can read from Event Hubs.
+resource "azurerm_role_assignment" "asa_eventhubs" {
+  count                = var.enable_stream_analytics ? 1 : 0
+  scope                = azurerm_eventhub_namespace.main.id
+  role_definition_name = "Azure Event Hubs Data Receiver"
+  principal_id         = azurerm_stream_analytics_job.main[0].identity[0].principal_id
 }
 
 resource "azurerm_monitor_diagnostic_setting" "asa" {
-  count                      = var.enable_diagnostics ? 1 : 0
-  name                       = "asa-diag"
-  target_resource_id         = azurerm_stream_analytics_job.main.id
+  count                      = var.enable_stream_analytics ? 1 : 0
+  name                       = "diag-to-law"
+  target_resource_id         = azurerm_stream_analytics_job.main[0].id
   log_analytics_workspace_id = var.log_analytics_workspace_id
-  metric {
+
+  enabled_log {
+    category_group = "allLogs"
+  }
+  enabled_metric {
     category = "AllMetrics"
-    enabled  = true
   }
 }

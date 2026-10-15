@@ -1,21 +1,36 @@
-# Production environment
-project_name    = "dataai"
+# Prod: zone-redundant, firewall egress, Bastion, Purview, resource locks.
 environment     = "prod"
-primary_region  = "westeurope"
-cost_center     = "CC003"
-owner_email     = "dataai-prod@example.com"
+location        = "westeurope"
 resource_prefix = "dataai"
 instance_suffix = "001"
+cost_center     = "CC003"
+owner_email     = "dataai-prod@example.com"
 
-enable_bastion = true
-enable_purview = true
+# Networking
+enable_firewall            = true
+firewall_threat_intel_mode = "Deny"
+enable_bastion             = true
+enable_vpn_gateway         = false
+enable_flow_logs           = true
 
-enable_iso27001 = true
-enable_nis2     = false # set to true and set nis2_initiative_id when using NIS2 initiative
+# Monitoring & security
+log_retention_days         = 365
+key_vault_purge_protection = true
+enable_resource_locks      = true
+# Defender plans are subscription-wide: enable here only if no other stack manages them.
+enable_defender = false
 
-adf_repo_config = {
-  type        = "GitHub"
-  repo_url    = "https://github.com/org/dataai-adf"
-  branch      = "main"
-  root_folder = "/"
-}
+# Data
+data_lake_replication   = "GZRS"
+synapse_enable_sql_pool = true
+cosmos_serverless       = false
+
+# AI
+ai_search_sku           = "standard"
+ai_search_replica_count = 2
+
+# Serving
+aks_sku_tier          = "Standard"
+aks_system_node_count = { min = 3, max = 5 }
+aks_user_node_count   = { min = 2, max = 10 }
+enable_purview        = true

@@ -1,309 +1,296 @@
-# Azure Data & AI Landing Zone
+# Azure Data & AI Landing Zone (Terraform)
 
-Production-grade, enterprise-ready Azure Data & AI Landing Zone built with Terraform. The infrastructure is modular, secure-by-default, and follows [Azure Cloud Adoption Framework (CAF)](https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/) best practices.
+[![CI](https://github.com/MedGhassen/Enterprise-Azure-Data-AI-Landing-Zone/actions/workflows/ci.yml/badge.svg)](https://github.com/MedGhassen/Enterprise-Azure-Data-AI-Landing-Zone/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Terraform](https://img.shields.io/badge/Terraform-%E2%89%A5%201.9-7B42BC)
+![azurerm](https://img.shields.io/badge/azurerm-4.x-0078D4)
 
-## Architecture Overview
+A modular, **private-by-default** Azure landing zone for data and AI workloads, built with Terraform
+and aligned with the [Cloud Adoption Framework](https://learn.microsoft.com/azure/cloud-adoption-framework/).
+It deploys a hub-spoke network, a medallion data lake, data engineering services, Microsoft Foundry and
+AI Search, and a private AKS serving tier, with management groups, policy and RBAC handled by a separate
+tenant-level stack.
 
-The landing zone implements a **hub-spoke** network topology with:
+> **Disclaimer:** this is a community project. It is **not** an official Microsoft product and is not
+> affiliated with or endorsed by Microsoft. For Microsoft's reference implementations see
+> [Azure Landing Zones](https://aka.ms/alz) and [Azure Verified Modules](https://aka.ms/avm).
+> Review the code, security settings and costs before deploying to production.
 
-- **Foundation:** Governance (management groups, Azure Policy, RBAC), Networking (hub VNet, spoke VNet, Azure Firewall, Private DNS zones, optional P2S VPN Gateway with Entra ID auth, DNS Private Resolver, Bastion, Network Watcher / NSG flow logs), Monitoring (Log Analytics, Application Insights), and Security (Key Vault, Microsoft Defender for Cloud).
-- **Data layer:** ADLS Gen2 (medallion: raw / curated / enriched), Azure Data Factory (managed VNet), Azure Databricks (VNet-injected, Unity Catalog), Azure Synapse Analytics (SQL + Spark pools), Azure SQL Database, Cosmos DB, Event Hubs, Stream Analytics.
-- **AI/ML:** Azure ML Workspace, Azure AI Foundry (Hub + Projects), Azure OpenAI Service, Cognitive Services, AI Search.
-- **Serving:** AKS (private cluster), Azure Container Registry, optional Microsoft Purview.
+## Contents
 
-All PaaS services are accessed via **Private Endpoints** only (zero public internet exposure). Managed identities are used throughout; secrets are stored in Key Vault.
+- [What you get](#what-you-get)
+- [Architecture](#architecture)
+- [Repository layout](#repository-layout)
+- [Quick start](#quick-start)
+- [Post-deployment steps](#post-deployment-steps)
+- [Configuration](#configuration)
+- [Security model](#security-model)
+- [Cost](#cost)
+- [CI/CD](#cicd)
+- [Development and testing](#development-and-testing)
+- [Limitations and roadmap](#limitations-and-roadmap)
 
-### Architecture diagram
+## What you get
 
-```mermaid
-flowchart TB
-    subgraph Governance
-        MG[Management Groups]
-        Policy[Azure Policy]
-        RBAC[RBAC]
-    end
+| Area | Components |
+| ---- | ---------- |
+| **Governance** (`platform/`) | Management groups (Platform, Landing Zones, Sandbox + children) with deterministic IDs, subscription placement, allowed-locations and tag policies, ISO 27001 / NIS2 / custom compliance initiatives, Data Engineer / Data Scientist / ML Engineer custom roles |
+| **Networking** | Hub VNet (Azure Firewall + policy, P2S VPN with Entra ID, DNS Private Resolver, Bastion), spoke VNet with NSG per subnet, AKS egress through the firewall (UDR), NAT Gateway for Databricks, 22 private DNS zones, VNet flow logs + Traffic Analytics |
+| **Foundation** | Log Analytics, Application Insights, action group + Service Health alert, Key Vault (RBAC, private), optional Defender for Cloud |
+| **Data** | ADLS Gen2 (raw / curated / enriched + unity, synapse), Data Factory (managed VNet), Databricks (VNet injection, Private Link, Unity Catalog access connector), Synapse (Spark, serverless SQL, optional dedicated pool), Azure SQL, Cosmos DB, Event Hubs, optional Stream Analytics |
+| **AI** | Microsoft Foundry (AI Services account, projects, model deployments), Azure AI Search with a keyless Foundry connection, optional Azure Machine Learning workspace |
+| **Serving** | Private AKS (Entra ID + Azure RBAC, CNI Overlay + Cilium, workload identity, auto-upgrades), Premium ACR, optional Microsoft Purview |
+| **Operations** | Offline tests, TFLint, Trivy, terraform-docs, deployment pipelines for GitHub Actions and Azure DevOps (OIDC, plan/approve/apply per environment) |
 
-    subgraph Hub[Hub VNet]
-        FW[Azure Firewall]
-        VPN[P2S VPN Gateway]
-        DNS[Private DNS Resolver]
-        subgraph Subnets
-            SnetSec[Security Subnet]
-            SnetData[Data Subnet]
-            SnetAI[AI Subnet]
-            SnetServing[Serving Subnet]
-        end
-    end
+Every optional service sits behind an `enable_*` flag, so you can start small (see [`examples/minimal.tfvars`](examples/minimal.tfvars)).
 
-    subgraph Foundation
-        LA[Log Analytics]
-        AI[Application Insights]
-        KV[Key Vault]
-        Defender[Defender for Cloud]
-    end
+## Architecture
 
-    subgraph DataLayer[Data Layer]
-        ADLS[ADLS Gen2<br/>raw/curated/enriched]
-        ADF[Data Factory]
-        DB[Databricks]
-        Synapse[Synapse]
-        SQL[Azure SQL]
-        Cosmos[Cosmos DB]
-        EH[Event Hubs]
-    end
+![Architecture](docs/diagrams/architecture.svg)
 
-    subgraph AIML[AI/ML]
-        AML[Azure ML]
-        AIFoundry[AI Foundry]
-        OpenAI[OpenAI]
-        Cognitive[Cognitive Services]
-        Search[AI Search]
-    end
+More diagrams (all editable draw.io files, see [docs/diagrams](docs/diagrams)):
+[network topology](docs/diagrams/network.svg) ·
+[governance](docs/diagrams/governance.svg) ·
+[data & AI flow](docs/diagrams/data-flow.svg) ·
+[identity & access](docs/diagrams/identity.svg) ·
+[CI/CD & state](docs/diagrams/cicd.svg)
 
-    subgraph Serving
-        AKS[AKS]
-        ACR[Container Registry]
-        Purview[Purview]
-    end
+Key design decisions:
 
-    MG --> Policy
-    MG --> RBAC
-    Hub --> FW
-    Hub --> VPN
-    SnetSec --> KV
-    SnetData --> ADLS
-    SnetData --> ADF
-    SnetData --> DB
-    SnetData --> Synapse
-    SnetData --> SQL
-    SnetData --> Cosmos
-    SnetData --> EH
-    SnetAI --> AML
-    SnetAI --> AIFoundry
-    SnetAI --> OpenAI
-    SnetAI --> Cognitive
-    SnetAI --> Search
-    SnetServing --> AKS
-    SnetServing --> ACR
-    SnetServing --> Purview
-    ADLS --> ADF
-    ADLS --> Synapse
-    KV --> AML
-    LA --> Defender
-```
+- **Two stacks.** `platform/` holds tenant-level governance and is deployed once. The repository root is
+  the landing zone and is deployed once **per environment** (dev, staging, prod), ideally into a dedicated
+  subscription per environment.
+- **Self-contained environments.** Each environment gets its own hub and spoke. Connecting to a central
+  connectivity hub is on the [roadmap](#limitations-and-roadmap).
+- **No public endpoints, no keys.** PaaS services disable public network access and local/key auth;
+  traffic uses private endpoints and services authenticate with managed identities.
 
-## Management group hierarchy
-
-When `create_management_group_hierarchy` is enabled, the governance module creates a CAF-aligned structure under the tenant root:
-
-- **Tenant Root** has three direct children: **Platform**, **Landing Zones**, **Sandbox** (siblings).
-- **Platform** (central IT shared services) contains: **Management** (Log Analytics, Defender, Sentinel), **Connectivity** (Hub VNet, Firewall, DNS), and optionally **Identity** (hybrid AD). Set `create_identity_management_group = true` to create the Identity child.
-- **Landing Zones** (workload subscriptions) contains: **Data & AI — Dev**, **Data & AI — Staging**, **Data & AI — Prod**.
-- **Sandbox** contains one child **Sandbox** management group for the sandbox subscription.
-
-Subscription associations are created when the corresponding subscription ID variables are set: `subscription_id_connectivity`, `subscription_id_management`, `subscription_id_identity`, `subscription_id_dataai_dev`, `subscription_id_dataai_staging`, `subscription_id_dataai_prod`, `subscription_id_sandbox`. Leave empty to skip. The legacy `subscription_id` variable associates a single subscription with the Landing Zones parent.
-
-```
-Tenant Root
-├── Platform (Management, Connectivity, Identity*)
-├── Landing Zones (Data & AI — Dev, Staging, Prod)
-└── Sandbox (Sandbox)
-* Identity child created when create_identity_management_group = true
-```
-
-## Compliance policies
-
-Regulatory compliance initiatives can be assigned at a management group when the corresponding enable flag is `true`:
-
-| Flag / variable | Description |
-|-----------------|-------------|
-| `enable_iso27001` | Assigns the built-in **ISO 27001:2013** Regulatory Compliance initiative. Set to `true` in prod (e.g. in `environments/prod.tfvars`). |
-| `enable_nis2` | Assigns the **NIS2** initiative. Requires `nis2_initiative_id` (custom or partner policy set definition ID); Azure has no built-in NIS2 initiative. |
-| `compliance_policy_scope_mg` | Target management group: `landing_zones` (default), `platform`, or `sandbox`. |
-| `compliance_policy_parameters_iso27001` / `compliance_policy_parameters_nis2` | Optional JSON string of parameters for the initiative. |
-| `compliance_policy_assignments` | List of additional initiatives: `enable`, `initiative_display_name` or `policy_set_definition_id`, `assignment_scope`, `parameters`, `assignment_name`. |
-
-Only assignments whose enable parameter is `true` are created. Use environment-specific tfvars to enable ISO 27001 in production and leave it off in dev/staging if desired.
-
-## VPN Gateway (Point-to-Site)
-
-When `enable_vpn_gateway` is `true`, the networking module deploys:
-
-- **P2S VPN Gateway** with **Entra ID (Azure AD) authentication** and OpenVPN protocol in the hub VNet.
-- **Azure DNS Private Resolver** with an inbound endpoint in the hub, so VPN clients can resolve all private DNS zones (private endpoints).
-- Hub VNet DNS settings are updated to point at the resolver IP, which the VPN Gateway propagates to connected clients automatically.
-
-| Variable | Description |
-|----------|-------------|
-| `enable_vpn_gateway` | Enable the VPN Gateway and DNS Private Resolver (default `false`). |
-| `vpn_client_address_pool` | CIDR for P2S client addresses (default `172.16.0.0/24`, must not overlap with hub/spoke). |
-
-The VPN Gateway is enabled by default in `environments/dev.tfvars` for developer access and disabled in staging/prod.
-
-## Prerequisites
-
-- **Terraform** >= 1.5.0
-- **Azure CLI** (for local auth: `az login`)
-- **Azure subscription** with sufficient quotas
-- **Permissions:** Contributor (or equivalent) on the subscription or target resource groups; User Access Administrator for RBAC assignments
-
-### Provider versions
-
-- `hashicorp/azurerm` ~> 3.85  
-- `hashicorp/azuread` ~> 2.47  
-- `azure/azapi` ~> 1.12  
-- `databricks/databricks` ~> 1.35  
-- `hashicorp/random` ~> 3.5  
-
-## State backend
-
-Terraform state is stored in Azure Storage with **Entra ID (Azure AD) authentication** — shared-key access is disabled. The backend is configured in `providers.tf` with `use_azuread_auth = true`.
-
-**Bootstrap** the backend before the first run using the provided script:
-
-```bash
-# One-time: create resource group, storage account (shared-key disabled), container,
-# and assign Storage Blob Data Contributor to the current user.
-./scripts/bootstrap-state.sh
-
-# Override defaults with flags:
-./scripts/bootstrap-state.sh -l northeurope -g my-rg -s mystorage01
-```
-
-The script outputs a `terraform init -backend-config=...` command. Run it to configure the backend. **Do not commit** backend config values, subscription IDs, or secrets — use `-backend-config`, `-var`, environment variables, or CI/CD secrets.
-
-The script auto-generates a storage account name from your subscription ID, disables shared-key access, and assigns the `Storage Blob Data Contributor` RBAC role. For CI/CD pipelines, assign the same role to each pipeline service principal or managed identity.
-
-## Naming and tagging
-
-- **Naming:** `{resource_prefix}-{environment}-{region_short}-{resource_type}-{instance}`  
-  Example: `dataai-dev-weu-hub-vnet-001`, `dataai-prod-weu-fw-001`  
-  Resource groups use the form `rg-{resource_prefix}-{environment}-{region_short}-{instance}` (e.g. `rg-dataai-dev-weu-001`).
-- **Tags:** `project`, `environment`, `managed_by`, `cost_center`, `owner` (from `variables.tf` / `terraform.tfvars`).
-
-## Deployment
-
-### Local (dev)
-
-```bash
-# After bootstrap: init with backend config (use values from bootstrap script output)
-terraform init -backend-config="resource_group_name=rg-terraform-state" \
-  -backend-config="storage_account_name=<from-bootstrap>" \
-  -backend-config="container_name=tfstate" \
-  -backend-config="key=data-ai-landing-zone.tfstate"
-
-terraform plan -var-file=environments/dev.tfvars
-terraform apply -var-file=environments/dev.tfvars
-```
-
-### Per environment
-
-- **Dev:** `terraform apply -var-file=environments/dev.tfvars`
-- **Staging:** `terraform apply -var-file=environments/staging.tfvars`
-- **Prod:** `terraform apply -var-file=environments/prod.tfvars`
-
-Environments differ by SKU sizes, feature flags (e.g. Purview and Bastion in prod, VPN Gateway in dev), compliance policies (e.g. ISO 27001 enabled in prod), and retention. Key variables you may override: `subscription_id` (single-sub association with Landing Zones), `subscription_id_connectivity` / `subscription_id_management` / `subscription_id_dataai_*` / `subscription_id_sandbox` (multi-sub association with child MGs), `enable_bastion`, `enable_vpn_gateway`, `vpn_client_address_pool`, `enable_purview`, `enable_iso27001`, `enable_nis2`, `nis2_initiative_id`, and backend settings (`backend_*`).
-
-## CI/CD
-
-- **GitHub Actions:** Copy `pipelines/github-actions.yml` to `.github/workflows/terraform.yml`.  
-  - On PR: `fmt -check`, `validate`, `plan` (with PR comment).  
-  - On push to `main`: `plan` then `apply` (use environment approval for production).  
-  - Uses OIDC for Azure auth. Set secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (and federated credential); `TF_STATE_RESOURCE_GROUP`, `TF_STATE_STORAGE_ACCOUNT`, `TF_STATE_CONTAINER` for backend config.
-
-- **Azure DevOps:** `pipelines/azure-pipelines.yml`  
-  - Validate → Plan → Apply (with environment approval).  
-  - Set `ARM_SERVICE_CONNECTION` and pipeline variables: `BACKEND_RESOURCE_GROUP`, `BACKEND_STORAGE_ACCOUNT`, `BACKEND_CONTAINER`.
-
-## Security
-
-- **Do not commit:** Subscription IDs, backend config values (`resource_group_name`, `storage_account_name`, etc.), API keys, or secrets. Use `-backend-config`, `-var`, environment variables, or CI/CD secrets. The `.gitignore` excludes common sensitive files.
-- **Zero public endpoints:** All relevant PaaS services use Private Endpoints; public access is disabled.
-- **Managed identities:** Used for Data Factory, Synapse, Databricks, ML, AKS, etc.
-- **Key Vault:** Premium, RBAC-only, soft-delete and purge protection; no public access.
-- **Encryption:** TLS 1.2 minimum; encryption at rest (TDE for SQL, default for storage/cosmos).
-- **Least privilege:** RBAC scoped to resource groups; custom roles for Data Engineers, Data Scientists, ML Engineers (see governance module).
-
-## Project structure
+## Repository layout
 
 ```
 .
-├── main.tf                      # Root module: wires all child modules together
-├── variables.tf                 # Input variables and feature flags
-├── outputs.tf                   # Root-level outputs (re-exported from modules)
-├── locals.tf                    # Naming conventions, region short codes, common tags
-├── providers.tf                 # Provider versions, azurerm backend (Entra ID auth)
-├── terraform.tfvars             # Default variable values
-├── environments/
-│   ├── dev.tfvars               # Dev overrides (VPN enabled, Bastion off)
-│   ├── staging.tfvars           # Staging overrides
-│   └── prod.tfvars              # Prod overrides (Bastion, Purview, ISO 27001 on)
+├── main.tf / variables.tf / outputs.tf / locals.tf / providers.tf   # landing zone (per environment)
+├── environments/            # dev / staging / prod profiles
+├── examples/                # minimal and full profiles
+├── platform/                # tenant-level governance stack (deploy once)
 ├── modules/
-│   ├── governance/              # Management groups, Azure Policy, RBAC
-│   ├── networking/              # Hub-spoke VNets, Firewall, VPN, DNS, NSGs
-│   │   ├── main.tf              # Hub/spoke VNets, subnets, peering, Firewall, DNS zones
-│   │   └── vpn.tf               # P2S VPN Gateway, DNS Private Resolver
-│   ├── monitoring/              # Log Analytics, Application Insights, action groups
-│   ├── security/                # Key Vault, Microsoft Defender for Cloud
-│   ├── data_lake/               # ADLS Gen2, medallion filesystems, private endpoints
-│   ├── data_factory/            # ADF, managed VNet, managed private endpoints
-│   ├── databricks/              # Workspace (VNet-injected), Unity Catalog
-│   ├── synapse/                 # Workspace, SQL pool, Spark pool
-│   ├── databases/               # Azure SQL, Cosmos DB
-│   ├── streaming/               # Event Hubs, Stream Analytics
-│   ├── ai_ml/                   # ML workspace, AI Foundry, OpenAI, Cognitive, AI Search
-│   └── serving/                 # AKS, ACR, optional Purview
-├── pipelines/
-│   ├── github-actions.yml       # GitHub Actions CI/CD (OIDC auth)
-│   └── azure-pipelines.yml      # Azure DevOps CI/CD (service connection)
-└── scripts/
-    └── bootstrap-state.sh       # Bootstrap Terraform state backend (Entra ID)
+│   ├── governance/          # management groups, policy, custom roles (used by platform/)
+│   ├── networking/          # hub-spoke, firewall, VPN, DNS, NAT, flow logs
+│   ├── monitoring/          # Log Analytics, App Insights, alerts
+│   ├── security/            # Key Vault, Defender for Cloud
+│   ├── data_lake/           # ADLS Gen2
+│   ├── data_factory/        # Azure Data Factory
+│   ├── databricks/          # Azure Databricks + Unity Catalog access connector
+│   ├── synapse/             # Azure Synapse Analytics
+│   ├── databases/           # Azure SQL, Cosmos DB
+│   ├── streaming/           # Event Hubs, Stream Analytics
+│   ├── ai/                  # Microsoft Foundry, AI Search, Azure ML
+│   └── serving/             # AKS, ACR, Purview
+├── tests/                   # offline terraform tests (mocked providers)
+├── pipelines/               # deployment pipelines (GitHub Actions, Azure DevOps)
+├── scripts/                 # state bootstrap, docs and diagram export
+└── docs/                    # diagrams and generated input/output reference
 ```
 
-## Module layout
+Each module has a README with its inputs and outputs; the root reference is in [docs/reference.md](docs/reference.md).
 
-| Module        | Purpose |
-|---------------|--------|
-| `governance`  | Management group hierarchy (Platform, Landing Zones, Sandbox + children), Azure Policy, compliance initiatives (ISO 27001, NIS2), custom RBAC |
-| `networking`  | Hub-spoke VNets, VNet peering, Azure Firewall, optional P2S VPN Gateway (Entra ID auth), DNS Private Resolver, Bastion, private DNS zones, NSGs, Network Watcher / NSG flow logs |
-| `monitoring`  | Log Analytics, Application Insights, action groups |
-| `security`    | Key Vault, Microsoft Defender for Cloud |
-| `data_lake`   | ADLS Gen2, medallion filesystems, lifecycle, private endpoints |
-| `data_factory`| ADF, managed VNet, managed private endpoints |
-| `databricks`  | Workspace (VNet-injected), Unity Catalog, private endpoint |
-| `synapse`     | Workspace, SQL pool, Spark pool, managed PE to ADLS |
-| `databases`   | Azure SQL, Cosmos DB |
-| `streaming`   | Event Hubs, Stream Analytics, capture to ADLS |
-| `ai_ml`       | ML workspace, AI Foundry Hub/Projects, OpenAI, Cognitive, AI Search |
-| `serving`     | AKS, ACR, optional Purview |
+## Quick start
 
-Each module has `main.tf`, `variables.tf`, and `outputs.tf` and is independently testable.
+### Prerequisites
 
-## Outputs
+- Terraform **>= 1.9** and Azure CLI (`az login`)
+- Permissions: **Owner** (or Contributor + User Access Administrator) on the target subscription; for
+  `platform/` also **Management Group Contributor** and **Resource Policy Contributor** on the parent
+  management group
+- Resource providers registered and quota for the SKUs you enable (AKS vCPUs, AI model capacity, ...)
 
-Root outputs include: resource group name/id, VNet and subnet IDs, storage account ID and DFS endpoint, Databricks workspace URL, Synapse SQL/Spark/dev endpoints, ML workspace ID, AI Foundry Hub ID, OpenAI endpoint, AKS FQDN and kubeconfig (sensitive), Key Vault URI, Log Analytics workspace ID, Data Factory ID, Event Hubs namespace, Cosmos DB and SQL server endpoints.
+### 1. Bootstrap the state backend
 
-The `networking` module also exposes: VPN Gateway ID and public IP, DNS Private Resolver inbound IP (all `null` when VPN is disabled). The `governance` module exposes management group IDs (platform, landing_zones, sandbox, and child MGs: management, connectivity, identity, data_ai_dev/staging/prod, sandbox_child), custom role definition IDs, and policy assignment IDs.
+```bash
+./scripts/bootstrap-state.sh            # optional: -l <region> -g <rg> -s <storage-account>
+```
+
+The script creates a storage account with shared keys disabled, versioning and soft delete, and grants
+you *Storage Blob Data Contributor*. It prints the `terraform init` commands to use.
+
+### 2. Deploy the platform stack (once per tenant)
+
+```bash
+cd platform
+cp platform.tfvars.example platform.tfvars      # git-ignored; edit prefix, locations, subscriptions
+terraform init -backend-config=... -backend-config="key=platform.tfstate"
+terraform apply -var-file=platform.tfvars
+```
+
+Skip this step if your organisation already manages management groups and policy (for example with ALZ).
+
+### 3. Deploy a landing zone environment
+
+```bash
+cd ..
+terraform init -backend-config=... -backend-config="key=data-ai-landing-zone-dev.tfstate"
+export ARM_SUBSCRIPTION_ID=<dev-subscription-id>
+terraform plan  -var-file=environments/dev.tfvars -out=tfplan
+terraform apply tfplan
+```
+
+Edit `owner_email`, `cost_center` and the feature flags in the tfvars file first. **Do not commit**
+subscription IDs or backend values: pass them with `-backend-config`, environment variables or CI secrets.
+
+### 4. Connect
+
+Everything is private. Reach the services through the P2S VPN (`enable_vpn_gateway = true`, Azure VPN
+Client with Entra ID), Azure Bastion (`enable_bastion = true`) or your own connectivity to the hub.
+
+## Post-deployment steps
+
+Some steps cannot (or should not) be automated from outside the private network:
+
+1. **Data Factory managed private endpoints:** approve the pending connections on the data lake storage
+   account (*Networking → Private endpoint connections*).
+2. **Databricks Unity Catalog:** in the Databricks account console, assign the workspace to a metastore
+   and create a storage credential with the `databricks_access_connector_id` output and
+   `abfss://unity@<storage_account_name>.dfs.core.windows.net/`.
+3. **Synapse managed private endpoints:** from Synapse Studio (over VPN/Bastion) create managed private
+   endpoints to the lake for Spark/pipelines and approve them on the storage account. Synapse's identity
+   already has *Storage Blob Data Contributor*.
+4. **AKS access:** `az aks get-credentials` + `kubelogin`, from a network that resolves the private API
+   server. Grant access with `aks_admin_group_object_ids` or Azure RBAC roles.
+5. **Models:** check model availability and quota in your region; adjust `model_deployments`.
+6. **SQL / Synapse administrators:** by default the deploying identity is the Entra admin. In shared
+   environments set `entra_admin_object_id` to an Entra group.
+
+## Configuration
+
+### Environment profiles
+
+| Setting | dev | staging | prod |
+| ------- | --- | ------- | ---- |
+| Firewall (AKS egress via UDR) | off | on | on (threat intel: Deny) |
+| P2S VPN + DNS resolver | on | off | off |
+| Bastion | off | off | on |
+| VNet flow logs | off | on | on |
+| Log retention | 30 days (5 GB/day cap) | 90 days | 365 days |
+| Key Vault purge protection | off | on | on |
+| Resource locks | off | off | on |
+| Data lake replication | LRS | ZRS | GZRS |
+| Synapse dedicated SQL pool | off | off | on |
+| Cosmos DB | serverless | autoscale | autoscale |
+| AI Search | basic | standard | standard ×2 replicas |
+| AKS | Free tier, 1–2 + 0–2 nodes | Standard, 2–3 + 1–3 | Standard, 3–5 + 2–10 |
+| Purview | off | off | on |
+
+### Main feature flags
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `enable_firewall` | `true` | Azure Firewall + policy; AKS egress via UDR |
+| `enable_vpn_gateway` | `false` | P2S VPN (Entra ID) + DNS Private Resolver |
+| `enable_bastion` | `false` | Azure Bastion |
+| `enable_flow_logs` | `false` | VNet flow logs + Traffic Analytics |
+| `enable_data_factory` / `enable_databricks` / `enable_synapse` | `true` | Data engineering services |
+| `enable_sql_database` / `enable_cosmos_db` / `enable_event_hubs` | `true` | Data stores and streaming |
+| `enable_stream_analytics` | `false` | Stream Analytics job |
+| `enable_foundry` / `enable_ai_search` / `enable_ml_workspace` | `true` | AI services |
+| `enable_aks` / `enable_purview` | `true` / `false` | Serving and catalog |
+| `enable_defender` | `false` | Defender plans (subscription-wide: one stack per subscription) |
+| `enable_resource_locks` | `false` | `CanNotDelete` locks on all workload resource groups |
+
+All inputs: [docs/reference.md](docs/reference.md).
+
+### Naming and tagging
+
+- Pattern: `{resource_prefix}-{environment}-{region}-{type}-{instance}`, for example `dataai-prod-weu-hub-vnet-001`.
+  Resource groups: `rg-{prefix}-{env}-{region}-{network|shared|data|ai|serving}-{instance}`.
+- Globally unique names (storage, Key Vault, ACR, SQL, Synapse, Cosmos DB, Event Hubs, Foundry, Search, ADF)
+  also carry a 4-character `unique_suffix`, generated once and kept in state (or set it yourself).
+- Tags: `project`, `environment`, `managed_by`, `cost_center`, `owner` + `additional_tags`. The platform
+  stack requires tags on resource groups and makes resources inherit them.
+
+## Security model
+
+- **Network:** no public network access on PaaS; private endpoints with `private_dns_zone_group`; NSG on every
+  spoke subnet; AKS is a private cluster with egress through the firewall; Databricks uses secure cluster
+  connectivity and Private Link (front-end and back-end).
+- **Identity:** Entra-only authentication for SQL, Synapse, Cosmos DB, Event Hubs, AI Search, Foundry and
+  storage (shared keys disabled). Service-to-service access uses managed identities and least-privilege
+  RBAC (see the [identity diagram](docs/diagrams/identity.svg)). AKS local accounts are disabled.
+- **Data protection:** TLS 1.2+, infrastructure (double) encryption on storage, blob/container soft delete,
+  Key Vault purge protection, Cosmos DB continuous backup, SQL TDE and auditing.
+- **Monitoring:** diagnostic settings to Log Analytics for every service, Service Health alerts, optional
+  Defender for Cloud.
+- **Supply chain:** pinned providers (lock file for linux/darwin/windows), GitHub Actions pinned to commit
+  SHAs, Dependabot, Trivy in CI.
+
+Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Cost
 
-Costs vary by environment (SKU sizes, retention, Purview/Bastion). Use the environment-specific `.tfvars` to size down in dev/staging (e.g. smaller SQL/Spark/AKS SKUs, shorter retention).
+Even idle, a landing zone has fixed costs (firewall, gateways, private endpoints, AKS nodes, AI Search).
+Rough, list-price **order-of-magnitude** estimates for the provided profiles, before workload consumption
+(data processing, tokens, storage, log ingestion):
 
-## Status
+| Profile | Rough fixed cost / month | Main drivers |
+| ------- | ------------------------ | ------------ |
+| `examples/minimal.tfvars` | ~$300–500 | ~10 private endpoints, AI Search basic, ACR Premium, Log Analytics |
+| `environments/dev.tfvars` | ~$1,000–1,500 | VPN gateway + DNS resolver, AKS node, ~20 private endpoints, AI Search basic |
+| `environments/prod.tfvars` | ~$4,000–6,000+ | Firewall, Synapse DW100c (pause it when idle), AKS nodes + SLA, AI Search ×2, Purview, Bastion |
 
-This landing zone has been validated in **dev and test** environments. Production deployments should follow your organization's change management and security review processes. Before production use, review and customize compliance policies, SKU sizes, and retention settings for your requirements.
+Prices vary by region, agreement and over time; check with the
+[Azure pricing calculator](https://azure.microsoft.com/pricing/calculator/) or Infracost before deploying.
+Disable what you don't need, and pause the Synapse dedicated pool and AKS when idle.
+
+## CI/CD
+
+- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every pull request with no Azure
+  credentials: `terraform fmt`, `validate`, `test` (mocked providers), TFLint, Trivy, terraform-docs and shellcheck.
+- **Deployment pipelines** (copy into your fork):
+  - GitHub Actions: [`pipelines/github/`](pipelines/github). Pull requests plan every environment and post the plan as a comment.
+    Pushes to `main` promote dev → staging → prod; each apply runs behind a GitHub environment with reviewers
+    and applies the exact plan artifact that was reviewed. OIDC only (no client secrets).
+  - Azure DevOps: [`pipelines/azure-devops/`](pipelines/azure-devops), with workload identity federation
+    service connections and ADO environments for approvals.
+
+See the [CI/CD diagram](docs/diagrams/cicd.svg) and the comments at the top of each pipeline file for setup.
+
+## Development and testing
+
+```bash
+terraform fmt -recursive
+terraform init -backend=false && terraform validate && terraform test
+(cd platform && terraform init -backend=false && terraform validate && terraform test)
+tflint --init && tflint --recursive --config "$PWD/.tflint.hcl"
+trivy config .
+./scripts/generate-docs.sh       # module READMEs + docs/reference.md
+./scripts/export-diagrams.sh     # draw.io -> SVG
+```
+
+The tests in [`tests/`](tests) and [`platform/tests/`](platform/tests) use Terraform's mock providers, so
+they need no Azure access. They cover the dev/prod/minimal profiles, name-length limits and input validation.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions.
+
+## Limitations and roadmap
+
+**Status:** `v0.1.0`. The configuration passes `terraform validate`, the offline test suites, TFLint and
+Trivy, and every profile in `environments/` and `examples/` produces a clean `terraform plan` against a
+real subscription. A full `apply` is not part of CI; deploy to a sandbox subscription first and please
+open an issue if something fails.
+
+Known limitations / planned work:
+
+- Bring-your-own hub (peer the spoke to an existing connectivity hub and central private DNS zones)
+- Customer-managed keys (CMK) as an opt-in for storage, Cosmos DB, SQL and AKS
+- Unity Catalog metastore, Synapse managed private endpoints and Event Hubs capture are not managed by
+  Terraform (see [post-deployment steps](#post-deployment-steps))
+- Single region per deployment; no paired-region DR automation
+- Workload rules on the firewall are limited to the AKS baseline; add your own rule collection groups
+  through the `firewall_policy_id` output
 
 ## Contributing
 
-Contributions are welcome. To contribute:
-
-1. **Fork** the repository and create a feature branch (`git checkout -b feature/your-feature`).
-2. **Follow** existing patterns: run `terraform fmt -recursive` and `terraform validate` before committing.
-3. **Test** changes in a dev environment before submitting.
-4. **Open a PR** with a clear description of the change and reference any related issues.
-
-For significant changes (e.g. new modules or compliance scope), open an issue first to discuss.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)

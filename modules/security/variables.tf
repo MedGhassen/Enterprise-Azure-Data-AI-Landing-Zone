@@ -1,85 +1,91 @@
-variable "project_name" {
-  description = "Project name for naming"
-  type        = string
-}
-
-variable "environment" {
-  description = "Environment (dev, staging, prod)"
-  type        = string
-}
-
-variable "primary_region" {
-  description = "Azure region"
-  type        = string
-}
-
 variable "name_prefix" {
-  description = "Prefix for resource names"
+  description = "Prefix for resource names, e.g. `dataai-dev-weu`."
   type        = string
 }
 
 variable "name_suffix" {
-  description = "Suffix for resource names"
+  description = "Instance suffix for resource names, e.g. `001`."
+  type        = string
+}
+
+variable "unique_suffix" {
+  description = "Short random suffix used for globally unique names."
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region."
+  type        = string
+}
+
+variable "resource_group_name" {
+  description = "Resource group for security resources."
   type        = string
 }
 
 variable "tags" {
-  description = "Tags to apply"
+  description = "Tags applied to all resources."
   type        = map(string)
   default     = {}
 }
 
-variable "resource_group_name" {
-  description = "Resource group for security resources"
+variable "private_endpoint_subnet_id" {
+  description = "Subnet for the Key Vault private endpoint."
+  type        = string
+}
+
+variable "private_dns_zone_ids" {
+  description = "Private DNS zone IDs keyed by zone name (from the networking module)."
+  type        = map(string)
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Log Analytics workspace ID for diagnostics."
   type        = string
 }
 
 variable "key_vault_sku" {
-  description = "Key Vault SKU (standard or premium)"
+  description = "Key Vault SKU (standard or premium)."
   type        = string
   default     = "premium"
   validation {
-    condition     = contains(["standard", "premium"], lower(var.key_vault_sku))
+    condition     = contains(["standard", "premium"], var.key_vault_sku)
     error_message = "key_vault_sku must be standard or premium."
   }
 }
 
-variable "subnet_id_private_endpoint" {
-  description = "Subnet ID for Key Vault private endpoint (snet-security)"
-  type        = string
+variable "soft_delete_retention_days" {
+  description = "Soft-delete retention (7-90 days)."
+  type        = number
+  default     = 90
 }
 
-variable "log_analytics_workspace_id" {
-  description = "Log Analytics workspace ID for Key Vault diagnostic settings"
-  type        = string
-  default     = ""
-}
-
-variable "enable_diagnostics" {
-  description = "Enable diagnostic settings for Key Vault"
+variable "purge_protection_enabled" {
+  description = "Enable purge protection. Recommended for prod; once enabled it cannot be disabled."
   type        = bool
   default     = true
 }
 
+variable "enable_defender" {
+  description = "Manage Defender for Cloud plans and security contact for the current subscription."
+  type        = bool
+  default     = false
+}
+
 variable "defender_plans" {
-  description = "List of Defender resource types (StorageAccounts, SqlServers, KeyVaults, AppServices, Containers, Arm)"
+  description = "Defender for Cloud plans to enable (resource types)."
   type        = list(string)
-  default     = ["StorageAccounts", "SqlServers", "KeyVaults", "AppServices", "Containers", "Arm"]
+  default     = ["StorageAccounts", "SqlServers", "KeyVaults", "Containers", "Arm", "CosmosDbs", "AI"]
 }
 
 variable "defender_contact_email" {
-  description = "Security contact email for Microsoft Defender for Cloud"
+  description = "Security contact email for Defender alerts."
   type        = string
+  default     = null
 }
 
-variable "private_dns_zone_vault_name" {
-  description = "Private DNS zone name for vault (privatelink.vaultcore.azure.net)"
+variable "defender_contact_phone" {
+  description = "Optional security contact phone number."
   type        = string
-  default     = ""
-}
-
-variable "private_dns_zone_vault_rg" {
-  description = "Resource group where the vault private DNS zone is"
-  type        = string
-  default     = ""
+  default     = null
 }

@@ -1,283 +1,270 @@
-# Resource group for the landing zone (shared by most resources)
-resource "azurerm_resource_group" "main" {
-  name     = "rg-${local.name_prefix}-${local.instance_suffix}"
-  location = var.primary_region
+# Data & AI landing zone (one deployment per environment).
+# Tenant-level governance (management groups, policy, custom roles) lives in ./platform.
+
+resource "azurerm_resource_group" "this" {
+  for_each = local.resource_groups
+  name     = each.value
+  location = local.location
   tags     = local.common_tags
 }
 
-# ---------------------------------------------------------------------------
-# Governance
-# ---------------------------------------------------------------------------
-module "governance" {
-  source = "./modules/governance"
-
-  project_name                      = var.project_name
-  environment                       = var.environment
-  tags                              = local.common_tags
-  create_management_group_hierarchy = true
-  subscription_id                   = var.subscription_id
-  allowed_locations                 = [var.primary_region]
-
-  create_identity_management_group = var.create_identity_management_group
-  subscription_id_connectivity     = var.subscription_id_connectivity
-  subscription_id_management       = var.subscription_id_management
-  subscription_id_identity         = var.subscription_id_identity
-  subscription_id_dataai_dev       = var.subscription_id_dataai_dev
-  subscription_id_dataai_staging   = var.subscription_id_dataai_staging
-  subscription_id_dataai_prod      = var.subscription_id_dataai_prod
-  subscription_id_sandbox          = var.subscription_id_sandbox
-
-  enable_iso27001                       = var.enable_iso27001
-  enable_nis2                           = var.enable_nis2
-  nis2_initiative_id                    = var.nis2_initiative_id
-  compliance_policy_scope_mg            = var.compliance_policy_scope_mg
-  compliance_policy_parameters_iso27001 = var.compliance_policy_parameters_iso27001
-  compliance_policy_parameters_nis2     = var.compliance_policy_parameters_nis2
-  compliance_policy_assignments         = var.compliance_policy_assignments
+resource "azurerm_management_lock" "rg" {
+  for_each   = var.enable_resource_locks ? azurerm_resource_group.this : {}
+  name       = "do-not-delete"
+  scope      = each.value.id
+  lock_level = "CanNotDelete"
+  notes      = "Managed by Terraform. Remove enable_resource_locks before destroying."
 }
 
 # ---------------------------------------------------------------------------
-# Networking (hub-spoke, firewall, private DNS zones, NSGs)
-# ---------------------------------------------------------------------------
-module "networking" {
-  source = "./modules/networking"
-
-  project_name                = var.project_name
-  environment                 = var.environment
-  primary_region              = var.primary_region
-  name_prefix                 = local.name_prefix
-  name_suffix                 = local.name_suffix
-  tags                        = local.common_tags
-  resource_group_name         = azurerm_resource_group.main.name
-  enable_bastion              = var.enable_bastion
-  enable_gateway              = var.enable_vpn_gateway
-  vpn_client_address_pool     = var.vpn_client_address_pool
-  log_analytics_workspace_id  = "" # set after monitoring
-  flow_log_storage_account_id = "" # set after data_lake if desired
-}
-
-# ---------------------------------------------------------------------------
-# Monitoring (Log Analytics, App Insights, Action Group)
+# Foundation
 # ---------------------------------------------------------------------------
 module "monitoring" {
   source = "./modules/monitoring"
 
-  project_name        = var.project_name
-  environment         = var.environment
-  primary_region      = var.primary_region
-  name_prefix         = local.name_prefix
-  name_suffix         = local.name_suffix
-  tags                = local.common_tags
-  resource_group_name = azurerm_resource_group.main.name
-  log_retention_days  = var.environment == "prod" ? 365 : 90
-  action_group_emails = [var.owner_email]
+  name_prefix              = local.name_prefix
+  name_suffix              = local.name_suffix
+  location                 = local.location
+  location_display_name    = local.region.display
+  resource_group_name      = azurerm_resource_group.this["shared"].name
+  tags                     = local.common_tags
+  log_retention_days       = var.log_retention_days
+  daily_quota_gb           = var.log_daily_quota_gb
+  action_group_emails      = [var.owner_email]
+  action_group_webhook_url = var.alert_webhook_url
 }
 
-# ---------------------------------------------------------------------------
-# Security (Key Vault, Defender for Cloud)
-# ---------------------------------------------------------------------------
+module "networking" {
+  source = "./modules/networking"
+
+  name_prefix                  = local.name_prefix
+  name_suffix                  = local.name_suffix
+  unique_suffix                = local.unique_suffix
+  location                     = local.location
+  resource_group_name          = azurerm_resource_group.this["network"].name
+  tags                         = local.common_tags
+  availability_zones           = var.availability_zones
+  hub_vnet_address_space       = var.hub_vnet_address_space
+  spoke_vnet_address_space     = var.spoke_vnet_address_space
+  subnet_cidrs                 = var.subnet_cidrs
+  enable_firewall              = var.enable_firewall
+  firewall_sku                 = var.firewall_sku
+  firewall_threat_intel_mode   = var.firewall_threat_intel_mode
+  enable_bastion               = var.enable_bastion
+  enable_vpn_gateway           = var.enable_vpn_gateway
+  vpn_gateway_sku              = var.vpn_gateway_sku
+  vpn_client_address_pool      = var.vpn_client_address_pool
+  enable_nat_gateway           = var.enable_databricks
+  enable_flow_logs             = var.enable_flow_logs
+  log_analytics_workspace_id   = module.monitoring.log_analytics_workspace_id
+  log_analytics_workspace_guid = module.monitoring.log_analytics_workspace_guid
+}
+
 module "security" {
   source = "./modules/security"
 
-  project_name                = var.project_name
-  environment                 = var.environment
-  primary_region              = var.primary_region
-  name_prefix                 = local.name_prefix
-  name_suffix                 = local.name_suffix
-  tags                        = local.common_tags
-  resource_group_name         = azurerm_resource_group.main.name
-  subnet_id_private_endpoint  = module.networking.subnet_ids["snet_security"]
-  log_analytics_workspace_id  = module.monitoring.log_analytics_workspace_id
-  defender_contact_email      = var.owner_email
-  private_dns_zone_vault_name = "privatelink.vaultcore.azure.net"
-  private_dns_zone_vault_rg   = azurerm_resource_group.main.name
+  name_prefix                = local.name_prefix
+  name_suffix                = local.name_suffix
+  unique_suffix              = local.unique_suffix
+  location                   = local.location
+  resource_group_name        = azurerm_resource_group.this["shared"].name
+  tags                       = local.common_tags
+  private_endpoint_subnet_id = module.networking.subnet_ids["security"]
+  private_dns_zone_ids       = module.networking.private_dns_zone_ids
+  log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
+  purge_protection_enabled   = var.key_vault_purge_protection
+  enable_defender            = var.enable_defender
+  defender_plans             = var.defender_plans
+  defender_contact_email     = var.owner_email
 }
 
 # ---------------------------------------------------------------------------
-# Data Lake (ADLS Gen2, medallion, private endpoints)
+# Data platform
 # ---------------------------------------------------------------------------
 module "data_lake" {
   source = "./modules/data_lake"
 
-  project_name               = var.project_name
-  environment                = var.environment
-  primary_region             = var.primary_region
   name_prefix                = local.name_prefix
   name_suffix                = local.name_suffix
+  unique_suffix              = local.unique_suffix
+  location                   = local.location
+  resource_group_name        = azurerm_resource_group.this["data"].name
   tags                       = local.common_tags
-  resource_group_name        = azurerm_resource_group.main.name
-  subnet_id_private_endpoint = module.networking.subnet_ids["snet_data"]
-  private_dns_zone_blob_name = "privatelink.blob.core.windows.net"
-  private_dns_zone_blob_rg   = azurerm_resource_group.main.name
-  private_dns_zone_dfs_name  = "privatelink.dfs.core.windows.net"
-  private_dns_zone_dfs_rg    = azurerm_resource_group.main.name
+  replication                = var.data_lake_replication
+  private_endpoint_subnet_id = module.networking.subnet_ids["data"]
+  private_dns_zone_ids       = module.networking.private_dns_zone_ids
+  log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
 }
 
-# ---------------------------------------------------------------------------
-# Data Factory (managed VNet, managed PEs to storage/SQL/Synapse)
-# ---------------------------------------------------------------------------
 module "data_factory" {
   source = "./modules/data_factory"
+  count  = var.enable_data_factory ? 1 : 0
 
-  project_name                     = var.project_name
-  environment                      = var.environment
-  primary_region                   = var.primary_region
-  name_prefix                      = local.name_prefix
-  name_suffix                      = local.name_suffix
-  tags                             = local.common_tags
-  resource_group_name              = azurerm_resource_group.main.name
-  log_analytics_workspace_id       = module.monitoring.log_analytics_workspace_id
-  git_repo_type                    = var.adf_repo_config.type
-  git_repo_url                     = var.adf_repo_config.repo_url
-  git_branch                       = var.adf_repo_config.branch
-  git_root_folder                  = var.adf_repo_config.root_folder
-  managed_private_endpoint_targets = [
-    { name = "storage-dfs", target_resource_id = module.data_lake.storage_account_id, subresource_name = "dfs" }
-  ]
+  name_prefix                = local.name_prefix
+  name_suffix                = local.name_suffix
+  unique_suffix              = local.unique_suffix
+  location                   = local.location
+  resource_group_name        = azurerm_resource_group.this["data"].name
+  tags                       = local.common_tags
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  storage_account_id         = module.data_lake.storage_account_id
+  private_endpoint_subnet_id = module.networking.subnet_ids["data"]
+  private_dns_zone_ids       = module.networking.private_dns_zone_ids
+  log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
+  git_repo_type              = try(var.adf_git.type, "GitHub")
+  git_repo_url               = try(var.adf_git.repo_url, null)
+  git_branch                 = try(var.adf_git.branch, "main")
+  git_root_folder            = try(var.adf_git.root_folder, "/")
 }
 
-# ---------------------------------------------------------------------------
-# Databricks (VNet injection, Unity Catalog optional, private endpoint)
-# ---------------------------------------------------------------------------
 module "databricks" {
   source = "./modules/databricks"
+  count  = var.enable_databricks ? 1 : 0
 
-  project_name                     = var.project_name
-  environment                      = var.environment
-  primary_region                   = var.primary_region
-  name_prefix                      = local.name_prefix
-  name_suffix                      = local.name_suffix
-  tags                             = local.common_tags
-  resource_group_name              = azurerm_resource_group.main.name
-  subnet_id_private                = module.networking.subnet_ids["snet_databricks_private"]
-  subnet_id_public                 = module.networking.subnet_ids["snet_databricks_public"]
-  subnet_id_private_endpoint       = module.networking.subnet_ids["snet_data"]
-  nsg_association_id_public        = module.networking.nsg_association_ids["databricks_public"]
-  nsg_association_id_private       = module.networking.nsg_association_ids["databricks_private"]
-  no_public_ip                     = true
-  storage_account_name             = module.data_lake.storage_account_name
-  private_dns_zone_databricks_name = "privatelink.azuredatabricks.net"
-  private_dns_zone_databricks_rg   = azurerm_resource_group.main.name
+  name_prefix                       = local.name_prefix
+  name_suffix                       = local.name_suffix
+  location                          = local.location
+  resource_group_name               = azurerm_resource_group.this["data"].name
+  tags                              = local.common_tags
+  virtual_network_id                = module.networking.spoke_vnet_id
+  private_subnet_name               = module.networking.subnet_names["databricks_private"]
+  public_subnet_name                = module.networking.subnet_names["databricks_public"]
+  private_subnet_nsg_association_id = module.networking.databricks_nsg_association_ids["databricks_private"]
+  public_subnet_nsg_association_id  = module.networking.databricks_nsg_association_ids["databricks_public"]
+  private_endpoint_subnet_id        = module.networking.subnet_ids["data"]
+  private_dns_zone_ids              = module.networking.private_dns_zone_ids
+  storage_account_id                = module.data_lake.storage_account_id
+  log_analytics_workspace_id        = module.monitoring.log_analytics_workspace_id
+  public_network_access_enabled     = var.databricks_public_network_access
 }
 
-# ---------------------------------------------------------------------------
-# Synapse (workspace, SQL pool, Spark pool, managed PE to ADLS)
-# ---------------------------------------------------------------------------
 module "synapse" {
   source = "./modules/synapse"
+  count  = var.enable_synapse ? 1 : 0
 
-  project_name               = var.project_name
-  environment                = var.environment
-  primary_region             = var.primary_region
   name_prefix                = local.name_prefix
   name_suffix                = local.name_suffix
+  unique_suffix              = local.unique_suffix
+  location                   = local.location
+  resource_group_name        = azurerm_resource_group.this["data"].name
   tags                       = local.common_tags
-  resource_group_name        = azurerm_resource_group.main.name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  entra_admin_object_id      = local.entra_admin_object_id
+  entra_admin_login          = local.entra_admin_login
   storage_account_id         = module.data_lake.storage_account_id
-  storage_account_name       = module.data_lake.storage_account_name
-  data_lake_filesystem_name  = "curated"
+  data_lake_filesystem_id    = "${module.data_lake.dfs_endpoint}synapse"
+  private_endpoint_subnet_id = module.networking.subnet_ids["data"]
+  private_dns_zone_ids       = module.networking.private_dns_zone_ids
   log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
-  subnet_id_private_endpoint = module.networking.subnet_ids["snet_data"]
-  private_dns_zone_sql_name  = "privatelink.sql.azuresynapse.net"
-  private_dns_zone_sql_rg    = azurerm_resource_group.main.name
+  enable_sql_pool            = var.synapse_enable_sql_pool
+  sql_pool_sku               = var.synapse_sql_pool_sku
+
+  depends_on = [module.data_lake]
 }
 
-# ---------------------------------------------------------------------------
-# Databases (Azure SQL, Cosmos DB)
-# ---------------------------------------------------------------------------
 module "databases" {
   source = "./modules/databases"
+  count  = var.enable_sql_database || var.enable_cosmos_db ? 1 : 0
 
-  project_name                 = var.project_name
-  environment                  = var.environment
-  primary_region               = var.primary_region
-  name_prefix                  = local.name_prefix
-  name_suffix                  = local.name_suffix
-  tags                         = local.common_tags
-  resource_group_name          = azurerm_resource_group.main.name
-  subnet_id_sql_pe             = module.networking.subnet_ids["snet_data"]
-  subnet_id_cosmos_pe          = module.networking.subnet_ids["snet_data"]
-  log_analytics_workspace_id   = module.monitoring.log_analytics_workspace_id
-  private_dns_zone_sql_name    = "privatelink.database.windows.net"
-  private_dns_zone_sql_rg      = azurerm_resource_group.main.name
-  cosmos_locations             = var.environment == "prod" ? [{ location = var.primary_region, failover_priority = 0 }] : []
-  private_dns_zone_cosmos_name = "privatelink.documents.azure.net"
-  private_dns_zone_cosmos_rg   = azurerm_resource_group.main.name
-}
-
-# ---------------------------------------------------------------------------
-# Streaming (Event Hubs, Stream Analytics)
-# ---------------------------------------------------------------------------
-module "streaming" {
-  source = "./modules/streaming"
-
-  project_name                   = var.project_name
-  environment                    = var.environment
-  primary_region                 = var.primary_region
-  name_prefix                    = local.name_prefix
-  name_suffix                    = local.name_suffix
-  tags                           = local.common_tags
-  resource_group_name            = azurerm_resource_group.main.name
-  capture_storage_account_id     = module.data_lake.storage_account_id
-  subnet_id_private_endpoint     = module.networking.subnet_ids["snet_data"]
-  private_dns_zone_eventhub_name = "privatelink.eventhub.azure.net"
-  private_dns_zone_eventhub_rg   = azurerm_resource_group.main.name
-  log_analytics_workspace_id     = module.monitoring.log_analytics_workspace_id
-}
-
-# ---------------------------------------------------------------------------
-# AI/ML (ML workspace, AI Foundry Hub + Projects, OpenAI, Cognitive, AI Search)
-# ---------------------------------------------------------------------------
-module "ai_ml" {
-  source = "./modules/ai_ml"
-
-  project_name               = var.project_name
-  environment                = var.environment
-  primary_region             = var.primary_region
   name_prefix                = local.name_prefix
   name_suffix                = local.name_suffix
+  unique_suffix              = local.unique_suffix
+  location                   = local.location
+  resource_group_name        = azurerm_resource_group.this["data"].name
   tags                       = local.common_tags
-  resource_group_name        = azurerm_resource_group.main.name
-  subnet_id_ai               = module.networking.subnet_ids["snet_ai"]
-  key_vault_id               = module.security.key_vault_id
-  storage_account_id         = module.data_lake.storage_account_id
-  application_insights_id    = module.monitoring.application_insights_id
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  private_endpoint_subnet_id = module.networking.subnet_ids["data"]
+  private_dns_zone_ids       = module.networking.private_dns_zone_ids
   log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
-  vnet_subnet_id_openai      = module.networking.subnet_ids["snet_ai"]
-  dns_zone_aml_name          = "privatelink.api.azureml.ms"
-  dns_zone_aml_rg            = azurerm_resource_group.main.name
-  dns_zone_openai_name       = "privatelink.openai.azure.com"
-  dns_zone_openai_rg         = azurerm_resource_group.main.name
-  dns_zone_cognitive_name    = "privatelink.cognitiveservices.azure.com"
-  dns_zone_cognitive_rg      = azurerm_resource_group.main.name
-  dns_zone_search_name       = "privatelink.search.windows.net"
-  dns_zone_search_rg         = azurerm_resource_group.main.name
-  openai_deployments = [
-    { name = "gpt4o", model = "gpt-4o", version = "2024-08-06", capacity = 10 },
-    { name = "gpt4o-mini", model = "gpt-4o-mini", version = "2024-07-18", capacity = 20 }
-  ]
-  ai_foundry_projects = [
-    { name = "main", display_name = "Main Project" }
-  ]
+  enable_sql                 = var.enable_sql_database
+  entra_admin_object_id      = local.entra_admin_object_id
+  entra_admin_login          = local.entra_admin_login
+  sql_database_sku           = var.sql_database_sku
+  enable_cosmos              = var.enable_cosmos_db
+  cosmos_serverless          = var.cosmos_serverless
+  cosmos_failover_locations  = var.cosmos_failover_locations
+  cosmos_zone_redundant      = length(var.availability_zones) > 0 && !var.cosmos_serverless
+}
+
+module "streaming" {
+  source = "./modules/streaming"
+  count  = var.enable_event_hubs ? 1 : 0
+
+  name_prefix                = local.name_prefix
+  name_suffix                = local.name_suffix
+  unique_suffix              = local.unique_suffix
+  location                   = local.location
+  resource_group_name        = azurerm_resource_group.this["data"].name
+  tags                       = local.common_tags
+  private_endpoint_subnet_id = module.networking.subnet_ids["data"]
+  private_dns_zone_ids       = module.networking.private_dns_zone_ids
+  log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
+  event_hubs                 = var.event_hubs
+  enable_stream_analytics    = var.enable_stream_analytics
+  stream_analytics_query     = var.stream_analytics_query
 }
 
 # ---------------------------------------------------------------------------
-# Serving (AKS, ACR, optional Purview)
+# Serving (ACR always; AKS and Purview optional)
 # ---------------------------------------------------------------------------
 module "serving" {
   source = "./modules/serving"
 
-  project_name               = var.project_name
-  environment                = var.environment
-  primary_region             = var.primary_region
+  name_prefix                  = local.name_prefix
+  name_suffix                  = local.name_suffix
+  unique_suffix                = local.unique_suffix
+  location                     = local.location
+  resource_group_name          = azurerm_resource_group.this["serving"].name
+  tags                         = local.common_tags
+  availability_zones           = length(var.availability_zones) > 0 ? var.availability_zones : null
+  acr_zone_redundancy_enabled  = length(var.availability_zones) > 0
+  private_endpoint_subnet_id   = module.networking.subnet_ids["serving"]
+  private_dns_zone_ids         = module.networking.private_dns_zone_ids
+  log_analytics_workspace_id   = module.monitoring.log_analytics_workspace_id
+  storage_account_id           = module.data_lake.storage_account_id
+  enable_aks                   = var.enable_aks
+  aks_subnet_id                = module.networking.subnet_ids["serving"]
+  egress_via_firewall          = var.enable_firewall
+  route_table_id               = module.networking.serving_route_table_id
+  aks_sku_tier                 = var.aks_sku_tier
+  aks_admin_group_object_ids   = var.aks_admin_group_object_ids
+  grant_deployer_cluster_admin = var.aks_grant_deployer_cluster_admin
+  system_node_vm_size          = var.aks_node_vm_size
+  system_node_min_count        = var.aks_system_node_count.min
+  system_node_max_count        = var.aks_system_node_count.max
+  user_node_vm_size            = var.aks_node_vm_size
+  user_node_min_count          = var.aks_user_node_count.min
+  user_node_max_count          = var.aks_user_node_count.max
+  enable_purview               = var.enable_purview
+
+  # AKS with userDefinedRouting needs the firewall rules and route in place first.
+  depends_on = [module.networking]
+}
+
+# ---------------------------------------------------------------------------
+# AI
+# ---------------------------------------------------------------------------
+module "ai" {
+  source = "./modules/ai"
+  count  = var.enable_foundry || var.enable_ai_search || var.enable_ml_workspace ? 1 : 0
+
   name_prefix                = local.name_prefix
   name_suffix                = local.name_suffix
+  unique_suffix              = local.unique_suffix
+  location                   = local.location
+  resource_group_name        = azurerm_resource_group.this["ai"].name
   tags                       = local.common_tags
-  resource_group_name        = azurerm_resource_group.main.name
-  subnet_id_aks              = module.networking.subnet_ids["snet_serving"]
-  subnet_id_acr_pe           = module.networking.subnet_ids["snet_serving"]
-  enable_purview             = var.enable_purview
-  private_dns_zone_acr_name  = "privatelink.azurecr.io"
-  private_dns_zone_acr_rg    = azurerm_resource_group.main.name
+  private_endpoint_subnet_id = module.networking.subnet_ids["ai"]
+  private_dns_zone_ids       = module.networking.private_dns_zone_ids
   log_analytics_workspace_id = module.monitoring.log_analytics_workspace_id
+  enable_foundry             = var.enable_foundry
+  foundry_projects           = var.foundry_projects
+  model_deployments          = var.model_deployments
+  enable_search              = var.enable_ai_search
+  search_sku                 = var.ai_search_sku
+  search_replica_count       = var.ai_search_replica_count
+  enable_ml_workspace        = var.enable_ml_workspace
+  key_vault_id               = module.security.key_vault_id
+  application_insights_id    = module.monitoring.application_insights_id
+  container_registry_id      = module.serving.container_registry_id
 }
